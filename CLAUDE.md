@@ -1,8 +1,9 @@
+---
+# comment: project context for the lsc comment-column tool
+---
 # CLAUDE.md
 
 Guidance for working on this project. Read before editing `lsc.py`.
-
-## comment: project context for the lsc comment-column tool
 
 ## What this is
 
@@ -11,12 +12,16 @@ an aligned column, preserving eza's colors and Nerd Font icons. It is a single
 Python file (`lsc.py`) plus thin zsh wrappers. There are no dependencies;
 `wcwidth` is used if importable but not required.
 
-The tool is invoked through zsh functions:
+`make install` puts the script on PATH as `lsc` (default `~/.local/bin/lsc`)
+and copies `lsc.zsh` to `$PREFIX/share/lsc/` (default `~/.local/share/lsc/`);
+locations are overridable via PREFIX/BINDIR/DATADIR, and a leading `~` in an
+override is expanded in the recipe so it never lands on disk literally. Users
+source the installed `lsc.zsh` from `~/.zshrc`:
 
-    lsc()     -> python3 ~/bin/lsc.py "$@"        # the listing
-    setcomm() -> python3 ~/bin/lsc.py set "$@"    # write a manifest comment
-    rmcomm()  -> python3 ~/bin/lsc.py rm  "$@"    # remove a manifest comment
-    getcomm() -> python3 ~/bin/lsc.py get "$@"    # print effective comment
+    ls()      -> eza ... --ignore-glob="$_eza_ignore"  # plain listing, manifest hidden
+    setcomm() -> lsc set "$@"    # write a manifest comment
+    rmcomm()  -> lsc rm  "$@"    # remove a manifest comment
+    getcomm() -> lsc get "$@"    # print effective comment
 
 ## Where comments come from (precedence matters)
 
@@ -28,6 +33,13 @@ The tool is invoked through zsh functions:
 
 The magic line wins over the manifest. `set`/`rm` operate on the manifest only;
 they warn (stderr) but still act when a magic line shadows the manifest.
+
+The manifest key `.` (constant `DIR_KEY`) is special: it is the directory's own
+caption, not a file. The lister reads `load_manifest(base).get(DIR_KEY)` and, if
+present, emits it as the first output line — left-aligned at column zero, in the
+comment style, above the listing. It is manifest-only (a directory has no head
+to scan) and is set with `lsc set . "..."` (which `os.path.split` resolves to
+`name == "."` in that directory's manifest, so no special-casing in `cmd_set`).
 
 ## Design decisions and their reasons (do not silently reverse these)
 
@@ -70,12 +82,25 @@ they warn (stderr) but still act when a magic line shadows the manifest.
 - **Write failures must not raise.** `save_manifest` returns a bool and cleans
   up its temp file on failure; `cmd_set`/`cmd_rm` report a clean error and exit
   non-zero. A read-only directory must not produce a traceback.
+- **Reading a file triggers iCloud downloads.** The magic-comment probe opens
+  every listed file's head; for an evicted ("Optimize Mac Storage") file that
+  read forces macOS to materialize it from iCloud, which is slow and uses data.
+  The listing therefore skips the probe for dataless files (`_is_dataless`, the
+  `SF_DATALESS` st_flags bit) unless `--probe-evicted` / `--probe` /
+  `LSC_PROBE_EVICTED` is
+  set, falling back to the manifest (or `DATALESS_PLACEHOLDER` when the manifest
+  has no entry). Do not move the probe ahead of this guard,
+  and do not assume `stat` is enough — it is the open/read that downloads, not
+  the stat. `st_flags` is macOS-only, so the guard no-ops elsewhere.
 
 ## Key functions
 
-- `read_comment(path)` — effective comment: `magic_comment(path) or
-  manifest_comment(path)`.
+- `read_comment(path, probe_evicted=True)` — effective comment:
+  `magic_comment(path, probe_evicted) or manifest_comment(path)`. The lister
+  passes `probe_evicted=False` by default; `set`/`rm`/`get` keep the default.
 - `magic_comment` / `manifest_comment` — the two sources.
+- `_is_dataless` — macOS SF_DATALESS check; gates the magic-comment probe so a
+  listing never forces an iCloud download.
 - `search_head` — binary-guarded, islice-capped (50 lines) regex scan.
 - `load_manifest` / `save_manifest` — JSON read / atomic write (temp+rename,
   auto-deletes when empty, returns False on failure).
@@ -88,6 +113,7 @@ they warn (stderr) but still act when a magic line shadows the manifest.
 ## Tunables (top of file)
 
     MANIFEST_NAME, NAME_FRAC, NAME_MIN, NAME_MAX, GAP, FALLBACK_WIDTH,
+    DATALESS_PLACEHOLDER,
     COMMENT_STYLE, EZA_BASE
 
 ## Testing notes

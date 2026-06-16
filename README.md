@@ -1,10 +1,35 @@
 # lsc: eza listing with comments
 
+[![tests](https://github.com/creance/eza-comments/actions/workflows/test.yml/badge.svg)](https://github.com/creance/eza-comments/actions/workflows/test.yml)
+
+> A single-file Python wrapper that adds an aligned, per-file comment column to
+> [`eza`](https://github.com/eza-community/eza) — colors and Nerd Font icons
+> intact, no dependencies.
+
 A Python tool that runs an `eza` listing once, then annotates each file with
 a short comment in an aligned column to the right of the names. Colors and
 Nerd Font icons are preserved; the layout adapts to terminal width and clips
 so no line ever wraps. When no file in the listing has a comment, output is
 byte-identical to plain eza.
+
+![lsc screenshot](docs/screenshot.png)
+
+<!-- comment: replace docs/screenshot.png with a real terminal capture before publishing -->
+
+Requirements: Python 3.8+ (uses the walrus operator), [`eza`](https://github.com/eza-community/eza),
+and a Nerd Font for icons (see below). `wcwidth` is used if importable but is
+not required.
+
+## Prior art
+
+The idea of per-file descriptions in a listing is old. 4DOS/Take Command stored
+them in a per-directory `DESCRIPT.ION` file; `dirnotes`, `fdir`, Directory Opus,
+and macOS Finder comments cover similar ground. `lsc` differs in two ways: it
+layers comments onto `eza`'s real output (so colors, icons, and `--classify`
+indicators survive), and it prefers an in-file `comment:` line over any sidecar
+store — that comment travels with the file's own bytes through iCloud, `rsync`,
+and atomic editor saves, which is exactly what xattr- and database-backed tools
+lose.
 
 ## Where comments come from
 
@@ -43,9 +68,22 @@ binaries where a magic line cannot live.
 
     lsc                 list the current directory with comments
     lsc DIR             list DIR (comments resolved against DIR)
+    lsc --probe-evicted read evicted iCloud files too (default skips them)
+    lsc --probe         shorthand for --probe-evicted
     lsc set FILE TEXT   set FILE's manifest comment
+    lsc set . TEXT      caption the directory (header line above the listing)
     lsc rm  FILE        remove FILE's manifest comment
     lsc get FILE        print FILE's effective comment
+
+### Directory caption
+
+A manifest entry keyed `.` is the directory's own caption. Set it with
+`setcomm . "these are my tools"` (i.e. `lsc set . "..."`), and it prints as a
+header line above the listing — left-aligned at column zero, in the same dim
+italic as comments. It lives in the manifest only (a directory has no head to
+scan for a magic line), keyed `.` in that directory's `.lsc-comments.json`, so
+it travels with the folder like any other comment. `lsc set otherdir/. "..."`
+captions another directory.
 
 `set` refuses if FILE does not exist (catches typos and wrong-directory
 mistakes). `set` and `rm` still act, but warn on stderr, when an in-file magic
@@ -74,10 +112,15 @@ a comment, the listing is passed through unchanged.
 
 ## Install
 
-    mkdir -p ~/bin
-    install -m 755 lsc.py ~/bin/lsc.py
+    make install            # lsc -> ~/.local/bin, lsc.zsh -> ~/.local/share/lsc
+    make install PREFIX=/usr/local
+    make install BINDIR=~/bin
 
-No pip packages required.
+`make install` copies the `lsc` command to a bin directory on your `PATH` and
+the `lsc.zsh` shell functions to a data directory; it prints the exact `source`
+line to add to your `~/.zshrc`, and warns if the bin directory is not on your
+`PATH`. `make uninstall` removes both. There are no pip packages to install;
+lsc is a single Python 3.8+ script. See the zsh section below for the functions.
 
 ## Nerd Font (needed for icons)
 
@@ -97,24 +140,18 @@ correctly when resolving the filename.
 
 ## zsh functions
 
-**Note**: in practice, I have regular `ls` alised to `lsc`.
+`make install` puts `lsc.zsh` at `$PREFIX/share/lsc/lsc.zsh` (so by default
+`~/.local/share/lsc/lsc.zsh`) and prints the line to add to your `~/.zshrc`:
 
-    # hide the manifest from listings (append to any existing _eza_ignore)
-    _eza_ignore=".lsc-comments.json"
-    
-    # interactive listing (icons auto-suppressed when piped)
-    ls()      { eza --classify --icons=auto --group-directories-first --ignore-glob="$_eza_ignore" "$@"; }
-    
-    # listing with the aligned comment column
-    lsc()     { python3 ~/bin/lsc.py "$@"; }
-    
-    # manage comments
-    setcomm() { python3 ~/bin/lsc.py set "$@"; }
-    rmcomm()  { python3 ~/bin/lsc.py rm  "$@"; }
-    getcomm() { python3 ~/bin/lsc.py get "$@"; }
+    source ~/.local/share/lsc/lsc.zsh
 
-If `_eza_ignore` already holds globs, pipe-join instead:
-`_eza_ignore="$_eza_ignore|.lsc-comments.json"`.
+It loads on the next shell. (If you would rather not install it, you can source
+the copy in the repo instead — it is the same file.) That file defines a plain
+`ls` (eza with the manifest hidden via `_eza_ignore`) and the `setcomm` /
+`rmcomm` / `getcomm` wrappers around `lsc set|rm|get`. It merges with any
+`_eza_ignore` you already have, so it is safe to source after your own
+settings. The `lsc` command itself comes from `make install` and needs no
+function. In practice I alias `ls` straight to `lsc`; `lsc.zsh` shows where.
 
 ## Usage
 
@@ -138,12 +175,22 @@ record which directory each line came from.
     GAP            = 2       # gap between names and the comment column
     FALLBACK_WIDTH = 80      # width used when output is piped (no tty)
     COMMENT_STYLE  = "2;3"   # ANSI SGR for comments: 2=dim, 3=italic; "" = plain
+    DATALESS_PLACEHOLDER = "(not downloaded)"  # shown for evicted iCloud files
 
 To pin the column instead of letting it shift as you resize, set `NAME_MIN`
 and `NAME_MAX` close together (e.g. both near 38).
 
 ## Notes and caveats
 
+- iCloud-evicted files are not read by default. Reading a file's head to find
+  its magic `comment:` line would force macOS to download an evicted ("Optimize
+  Mac Storage") file, so the listing skips that probe for dataless files and
+  shows their manifest comment if one exists, otherwise a `(not downloaded)`
+  placeholder, right-aligned to the terminal edge to read as a status note
+  rather than a description (`DATALESS_PLACEHOLDER`; set to `""` to disable). Pass
+  `--probe-evicted` / `--probe` (or set `LSC_PROBE_EVICTED=1`) to read them anyway,
+  accepting the downloads. This is a no-op off macOS, where the dataless flag
+  does not exist.
 - The manifest is keyed by bare filename and lives in the directory, so it
   travels when you move the folder. Renaming a file leaves its entry stale
   (harmless — it just stops matching). There is no `mv` subcommand yet to

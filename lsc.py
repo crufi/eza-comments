@@ -16,12 +16,19 @@ Comments come from two places, in order of precedence:
 Subcommands manage the manifest:
   lsc                 list the current directory with comments
   lsc DIR             list DIR (comments resolved against DIR)
+  lsc --probe-evicted read evicted iCloud files too (default skips them, so a
+                      listing never forces an iCloud download); --probe is short
+                      for the same flag
   lsc set FILE TEXT   set FILE's manifest comment (refuses if FILE is absent)
   lsc rm  FILE        remove FILE's manifest comment
   lsc get FILE        print FILE's effective comment
 
 set and rm warn (on stderr) but still act when an in-file magic line shadows
 the manifest, since the magic line is what the listing will actually show.
+
+A manifest entry keyed "." (set with `lsc set . "..."`) is the directory's own
+caption: it prints left-aligned, in the comment style, as a header line above
+the listing.
 """
 
 # comment: python script driving my ls-with-comments
@@ -37,6 +44,7 @@ from itertools import islice
 # ----- tunables ---------------------------------------------------------------
 
 MANIFEST_NAME = ".lsc-comments.json"  # per-directory comment store
+DIR_KEY = "."  # manifest key for the directory's own caption (header line)
 # Layout is adaptive to terminal width W. The name column may grow up to
 # NAME_FRAC * W (so wide terminals show longer names before truncating), but
 # never below NAME_MIN or above NAME_MAX. The comment column starts just past
@@ -51,6 +59,12 @@ FALLBACK_WIDTH = 80    # used when terminal width can't be detected (piped)
 # themes), "3" = italic. Set to "" for plain text. Reset is appended
 # automatically.
 COMMENT_STYLE = "2;3"
+
+# Shown in the comment column for an evicted (dataless) iCloud file that has no
+# manifest comment, so the line reads as deliberately not-yet-downloaded rather
+# than blank. It appears only while the listing is skipping evicted files (i.e.
+# without --probe-evicted). Set to "" to leave such files blank instead.
+DATALESS_PLACEHOLDER = "(not downloaded)"
 
 # eza options to mirror the interactive `ls` shell function. --icons=always
 # and --color=always are forced because output is piped here but we still want
@@ -219,6 +233,26 @@ def search_head(path: str, pattern, max_lines: int = 50):
     return None
 
 
+# macOS marks an evicted ("Optimize Mac Storage") iCloud file as dataless: its
+# contents are not on disk, and the first read of one forces a download. The
+# listing skips the magic-comment probe for such files so it never silently
+# pulls data down; pass probe_evicted=True (the lister's --probe-evicted flag)
+# to read them anyway. st_flags is macOS-only, so this is a no-op elsewhere
+# (e.g. Linux), where _is_dataless always returns False and nothing is skipped.
+SF_DATALESS = 0x40000000
+
+
+def _is_dataless(path: str) -> bool:
+    """True if path is an evicted iCloud file whose bytes are not local. Uses
+    the macOS-only SF_DATALESS st_flags bit; returns False where st_flags is
+    unavailable. stat() alone does not trigger a download."""
+    try:
+        flags = getattr(os.stat(path), "st_flags", 0)
+    except OSError:
+        return False
+    return bool(flags & SF_DATALESS)
+
+
 def magic_comment(path: str) -> str:
     """The in-file "comment:" magic line text, or "". Text files only."""
     if m := search_head(path, _MAGIC_COMMENT_RE):
@@ -226,9 +260,14 @@ def magic_comment(path: str) -> str:
     return ""
 
 
-def read_comment(path: str) -> str:
-    """Effective comment shown in the listing: an in-file magic "comment:" line
-    wins, then the per-directory manifest."""
+def read_comment(path: str, probe_evicted: bool = True) -> str:
+    """Effective comment for the listing. A magic "comment:" line wins, then
+    the per-directory manifest. When probe_evicted is False and the file is an
+    evicted (dataless) iCloud file, its contents are not read (so the lookup
+    cannot trigger a download): the manifest still applies, and if it has no
+    entry the DATALESS_PLACEHOLDER is shown so the file is not silently blank."""
+    if not probe_evicted and _is_dataless(path):
+        return manifest_comment(path) or DATALESS_PLACEHOLDER
     return magic_comment(path) or manifest_comment(path)
 
 
@@ -364,6 +403,17 @@ def main(argv):
     if args and args[0] in ("set", "rm", "get"):
         return {"set": cmd_set, "rm": cmd_rm, "get": cmd_get}[args[0]](args[1:])
 
+    # --probe-evicted (or the shorthand --probe) forces reading evicted iCloud
+    # files for their magic comment; the default skips them so a listing never
+    # triggers a download. The LSC_PROBE_EVICTED env var does the same. These
+    # flags are consumed here so they are never handed to eza.
+    probe_flags = {"--probe-evicted", "--probe"}
+    probe_evicted = (
+        any(a in probe_flags for a in args)
+        or bool(os.environ.get("LSC_PROBE_EVICTED"))
+    )
+    args = [a for a in args if a not in probe_flags]
+
     lines = run_eza(args)
 
     base = _base_dir(args)
@@ -376,7 +426,13 @@ def main(argv):
     # is what actually occupies terminal columns. Aligning on this keeps the
     # truncated and non-truncated branches on the same origin.
     full_vis = [vis_width(strip_ansi(ln)) for ln in lines]
-    comments = [read_comment(p) for p in paths]
+    comments = [read_comment(p, probe_evicted) for p in paths]
+
+    # A manifest entry keyed "." is the directory's own caption. It is shown
+    # left-aligned, in the comment style, as a header line above the listing.
+    # Manifest only — a directory has no head to scan for a magic line — and set
+    # with `setcomm . "..."` (which stores it under "." in this dir's manifest).
+    dir_comment = load_manifest(base).get(DIR_KEY, "")
 
     any_comments = any(comments)
 
@@ -409,6 +465,8 @@ def main(argv):
     comment_budget = max(0, width - col)
 
     out = []
+    if dir_comment:
+        out.append(_style_comment(clip_text(dir_comment, width)))
     for line, fw, comment in zip(lines, full_vis, comments):
         shown = clip_text(comment, comment_budget) if comment else ""
         if any_truncate and fw > name_trunc:
@@ -417,6 +475,15 @@ def main(argv):
             tail = _style_comment(shown) if shown else ""
             out.append(f"{cut}\u2026 {tail}".rstrip())
         elif shown:
+            # The dataless placeholder is right-aligned to the terminal's right
+            # edge (it's a status note, not a description); a real comment sits
+            # left-aligned in the shared column. Fall back to the column if the
+            # name leaves too little room to right-align cleanly.
+            if comment == DATALESS_PLACEHOLDER:
+                rpad = width - fw - vis_width(comment)
+                if rpad >= GAP:
+                    out.append(f"{line}{' ' * rpad}{_style_comment(comment)}")
+                    continue
             pad = col - fw
             out.append(f"{line}{' ' * pad}{_style_comment(shown)}")
         else:

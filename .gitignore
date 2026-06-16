@@ -1,0 +1,18 @@
+# comment: keep python cruft and macos/editor noise out of the repo
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# manifest temp file from an interrupted atomic write
+.lsc-comments.json.tmp
+
+# macos
+.DS_Store
+
+# editor
+.vscode/
+*.swp
