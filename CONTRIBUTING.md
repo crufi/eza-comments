@@ -1,6 +1,7 @@
 ---
 # comment: how to contribute to lsc
 ---
+
 # Contributing
 
 Thanks for your interest in lsc. It is a small, single-file tool, and the bar
