@@ -1,6 +1,6 @@
 # lsc: eza listing with comments
 
-[![tests](https://github.com/creance/eza-comments/actions/workflows/test.yml/badge.svg)](https://github.com/creance/eza-comments/actions/workflows/test.yml)
+[![tests](https://github.com/crufi/eza-comments/actions/workflows/test.yaml/badge.svg)](https://github.com/crufi/eza-comments/actions/workflows/test.yaml)
 
 > A single-file Python wrapper that adds an aligned, per-file comment column to
 > [`eza`](https://github.com/eza-community/eza) — colors and Nerd Font icons
