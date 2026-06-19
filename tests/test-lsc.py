@@ -12,6 +12,7 @@ import sys
 import json
 import subprocess
 import tempfile
+import shutil
 import unittest
 from pathlib import Path
 
@@ -113,14 +114,28 @@ class LscTests(unittest.TestCase):
         self.assertEqual(ANSI_RE.sub("", first), "these are my tools")
 
     def test_set_dot_writes_directory_key(self):
-        # `lsc set . "..."` stores the caption under "." in this dir's manifest.
+        # `lsc --set . "..."` stores the caption under "." in this dir's manifest.
         self._touch("a.txt")
-        r = subprocess.run([sys.executable, LSC, "set", ".", "dir note"],
+        r = subprocess.run([sys.executable, LSC, "--set", ".", "dir note"],
                            cwd=self.dir, capture_output=True, text=True,
                            env=make_env([]))
         self.assertEqual(r.returncode, 0, r.stderr)
         data = json.loads((Path(self.dir) / ".lsc-comments.json").read_text())
         self.assertEqual(data["."], "dir note")
+
+    def test_help_exits_zero_without_invoking_eza(self):
+        env = make_env(["should-not-appear.txt"])
+        r = subprocess.run([sys.executable, LSC, "--help"],
+                           capture_output=True, text=True, env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("aligned comment column", r.stdout)
+        self.assertNotIn("should-not-appear.txt", r.stdout)
+
+    def test_version_exits_zero(self):
+        r = subprocess.run([sys.executable, LSC, "--version"],
+                           capture_output=True, text=True, env=make_env([]))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertRegex(r.stdout.strip(), r"^lsc \d+\.\d+\.\d+$")
 
     def test_dataless_placeholder_is_right_aligned(self):
         # The placeholder is pushed to the terminal's right edge, so the
@@ -198,6 +213,61 @@ class DatalessTests(unittest.TestCase):
         lsc._is_dataless = lambda p: False
         self.assertEqual(
             lsc.read_comment(path, probe_evicted=False), "from magic line")
+
+
+EZA = shutil.which("eza")
+
+
+@unittest.skipUnless(EZA, "real eza not installed")
+class IntegrationTests(unittest.TestCase):
+    # Runs lsc against the real eza binary to catch output-format drift the
+    # stub cannot. Skipped automatically when eza is not on PATH, so the suite
+    # still passes without eza (e.g. on a Python-only CI runner).
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.dir = self._tmp.name
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _env(self, columns=120):
+        env = os.environ.copy()
+        env.pop("EZA_BIN", None)   # use the real eza on PATH, not the stub
+        env.pop("FAKE_EZA", None)
+        env["COLUMNS"] = str(columns)
+        return env
+
+    def test_real_eza_listing_and_precedence(self):
+        (Path(self.dir) / "report.txt").write_text("data\n", encoding="utf-8")
+        (Path(self.dir) / "run.sh").write_text(
+            "#!/bin/sh\n# comment: from magic line\n", encoding="utf-8")
+        (Path(self.dir) / ".lsc-comments.json").write_text(
+            json.dumps({"report.txt": "quarterly numbers",
+                        "run.sh": "from manifest"}), encoding="utf-8")
+        r = subprocess.run([sys.executable, LSC, self.dir],
+                           capture_output=True, text=True, env=self._env())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        plain = ANSI_RE.sub("", r.stdout)
+        # filenames survive real icon + ANSI stripping
+        self.assertIn("report.txt", plain)
+        self.assertIn("run.sh", plain)
+        # manifest comment shows; an in-file magic line wins over the manifest
+        self.assertIn("quarterly numbers", plain)
+        self.assertIn("from magic line", plain)
+        self.assertNotIn("from manifest", plain)
+
+    def test_real_eza_no_line_exceeds_width(self):
+        (Path(self.dir) / "data.csv").write_text("x\n", encoding="utf-8")
+        (Path(self.dir) / ".lsc-comments.json").write_text(
+            json.dumps({"data.csv": "y" * 200}), encoding="utf-8")
+        cols = 50
+        r = subprocess.run([sys.executable, LSC, self.dir],
+                           capture_output=True, text=True,
+                           env=self._env(columns=cols))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for line in r.stdout.splitlines():
+            self.assertLessEqual(len(ANSI_RE.sub("", line)), cols, repr(line))
 
 
 if __name__ == "__main__":

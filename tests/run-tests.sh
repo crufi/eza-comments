@@ -3,4 +3,4 @@
 
 here="$(cd "$(dirname "$0")" && pwd)"
 chmod +x "$here/fake-eza.py"
-exec python3 "$here/test-lsc.py"
+python3 "$here/test-lsc.py"

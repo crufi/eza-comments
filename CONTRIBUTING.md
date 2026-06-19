@@ -9,8 +9,7 @@ for changes is mostly about keeping it that way.
   and nothing installed. `wcwidth` is used only if it happens to be importable.
 - Keep it one file. The whole tool is `lsc.py`; please do not split it into a
   package unless there is a strong reason.
-- Read `CLAUDE.md` first. It documents the design decisions and the bugs that
-  caused them (icon ranges, ANSI-aware truncation, the no-xattr rule).
+- Have a look at `CLAUDE.md` first. It documents the design decisions and the bugs that caused them.
 
 ## Before opening a pull request
 
@@ -25,4 +24,5 @@ installed.
 ## Style
 
 - Filenames use hyphens, not underscores; shell scripts end in `.sh`.
-- Files start with a terse `comment:` magic line near the top.
+- Files start with a terse `comment:` magic line near the top so `lsc` can 
+  show comments about its code.

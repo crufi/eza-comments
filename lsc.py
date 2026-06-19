@@ -13,20 +13,22 @@ Comments come from two places, in order of precedence:
      This is plain JSON content, so it syncs through iCloud and travels with
      the directory (unlike xattrs, which iCloud strips).
 
-Subcommands manage the manifest:
+Manage the manifest with action flags (anything else is a path to list):
   lsc                 list the current directory with comments
   lsc DIR             list DIR (comments resolved against DIR)
   lsc --probe-evicted read evicted iCloud files too (default skips them, so a
                       listing never forces an iCloud download); --probe is short
                       for the same flag
-  lsc set FILE TEXT   set FILE's manifest comment (refuses if FILE is absent)
-  lsc rm  FILE        remove FILE's manifest comment
-  lsc get FILE        print FILE's effective comment
+  lsc --set FILE TEXT set FILE's manifest comment (refuses if FILE is absent)
+  lsc --rm  FILE      remove FILE's manifest comment
+  lsc --get FILE      print FILE's effective comment
+  lsc --help          show this help and exit
+  lsc --version       print the version and exit
 
-set and rm warn (on stderr) but still act when an in-file magic line shadows
+--set and --rm warn (on stderr) but still act when an in-file magic line shadows
 the manifest, since the magic line is what the listing will actually show.
 
-A manifest entry keyed "." (set with `lsc set . "..."`) is the directory's own
+A manifest entry keyed "." (set with `lsc --set . "..."`) is the directory's own
 caption: it prints left-aligned, in the comment style, as a header line above
 the listing.
 """
@@ -40,6 +42,8 @@ import json
 import shutil
 import subprocess
 from itertools import islice
+
+__version__ = "0.1.0"
 
 # ----- tunables ---------------------------------------------------------------
 
@@ -346,7 +350,7 @@ def _warn_if_shadowed(path: str, action: str) -> None:
 
 def cmd_set(argv) -> int:
     if len(argv) != 2:
-        sys.stderr.write('usage: lsc set FILE "comment"\n')
+        sys.stderr.write('usage: lsc --set FILE "comment"\n')
         return 2
     path, comment = argv
     if not os.path.exists(path):
@@ -367,7 +371,7 @@ def cmd_set(argv) -> int:
 
 def cmd_rm(argv) -> int:
     if len(argv) != 1:
-        sys.stderr.write("usage: lsc rm FILE\n")
+        sys.stderr.write("usage: lsc --rm FILE\n")
         return 2
     path = argv[0]
     directory, name = os.path.split(path)
@@ -389,7 +393,7 @@ def cmd_rm(argv) -> int:
 
 def cmd_get(argv) -> int:
     if len(argv) != 1:
-        sys.stderr.write("usage: lsc get FILE\n")
+        sys.stderr.write("usage: lsc --get FILE\n")
         return 2
     print(read_comment(argv[0]))
     return 0
@@ -398,10 +402,25 @@ def cmd_get(argv) -> int:
 def main(argv):
     args = argv[1:]
 
-    # subcommand dispatch: only the exact words set/rm/get are commands;
-    # anything else (paths, flags) goes to the lister.
-    if args and args[0] in ("set", "rm", "get"):
-        return {"set": cmd_set, "rm": cmd_rm, "get": cmd_get}[args[0]](args[1:])
+    # --help / --version describe lsc itself and must not fall through to eza
+    # (which has its own). Long forms only.
+    if "--help" in args:
+        sys.stdout.write((__doc__ or "").strip() + "\n")
+        return 0
+    if "--version" in args:
+        print(f"lsc {__version__}")
+        return 0
+
+    # Management actions are flags, not subcommands, so a bare word is always a
+    # path to list (a directory literally named "set" would otherwise collide).
+    actions = {"--set": cmd_set, "--get": cmd_get, "--rm": cmd_rm}
+    chosen = [a for a in args if a in actions]
+    if chosen:
+        if len(chosen) > 1:
+            sys.stderr.write("lsc: choose only one of --set, --get, --rm\n")
+            return 2
+        flag = chosen[0]
+        return actions[flag]([a for a in args if a != flag])
 
     # --probe-evicted (or the shorthand --probe) forces reading evicted iCloud
     # files for their magic comment; the default skips them so a listing never

@@ -70,25 +70,27 @@ binaries where a magic line cannot live.
     lsc DIR             list DIR (comments resolved against DIR)
     lsc --probe-evicted read evicted iCloud files too (default skips them)
     lsc --probe         shorthand for --probe-evicted
-    lsc set FILE TEXT   set FILE's manifest comment
-    lsc set . TEXT      caption the directory (header line above the listing)
-    lsc rm  FILE        remove FILE's manifest comment
-    lsc get FILE        print FILE's effective comment
+    lsc --set FILE TEXT set FILE's manifest comment
+    lsc --set . TEXT    caption the directory (header line above the listing)
+    lsc --rm  FILE      remove FILE's manifest comment
+    lsc --get FILE      print FILE's effective comment
+    lsc --help          show this help and exit
+    lsc --version       print the version and exit
 
 ### Directory caption
 
 A manifest entry keyed `.` is the directory's own caption. Set it with
-`setcomm . "these are my tools"` (i.e. `lsc set . "..."`), and it prints as a
+`setcomm . "these are my tools"` (i.e. `lsc --set . "..."`), and it prints as a
 header line above the listing — left-aligned at column zero, in the same dim
 italic as comments. It lives in the manifest only (a directory has no head to
 scan for a magic line), keyed `.` in that directory's `.lsc-comments.json`, so
-it travels with the folder like any other comment. `lsc set otherdir/. "..."`
+it travels with the folder like any other comment. `lsc --set otherdir/. "..."`
 captions another directory.
 
-`set` refuses if FILE does not exist (catches typos and wrong-directory
-mistakes). `set` and `rm` still act, but warn on stderr, when an in-file magic
+`--set` refuses if FILE does not exist (catches typos and wrong-directory
+mistakes). `--set` and `--rm` still act, but warn on stderr, when an in-file magic
 line shadows the manifest — because the magic line is what the listing will
-actually show. If the directory is read-only, `set`/`rm` print a clean error
+actually show. If the directory is read-only, `--set`/`--rm` print a clean error
 and exit non-zero rather than crashing; listing a read-only directory is
 unaffected.
 
@@ -112,15 +114,16 @@ a comment, the listing is passed through unchanged.
 
 ## Install
 
-    make install            # lsc -> ~/.local/bin, lsc.zsh -> ~/.local/share/lsc
+    make install            # lsc -> ~/.local/bin, lsc.sh -> ~/.local/share/lsc
     make install PREFIX=/usr/local
     make install BINDIR=~/bin
 
 `make install` copies the `lsc` command to a bin directory on your `PATH` and
-the `lsc.zsh` shell functions to a data directory; it prints the exact `source`
-line to add to your `~/.zshrc`, and warns if the bin directory is not on your
-`PATH`. `make uninstall` removes both. There are no pip packages to install;
-lsc is a single Python 3.8+ script. See the zsh section below for the functions.
+the `lsc.sh` shell functions to a data directory; it prints the exact `source`
+line to add to your shell rc (`~/.bashrc` or `~/.zshrc`), and warns if the bin
+directory is not on your `PATH`. `make uninstall` removes both. There are no pip
+packages to install; lsc is a single Python 3.8+ script. See the shell-functions
+section below.
 
 ## Nerd Font (needed for icons)
 
@@ -138,20 +141,21 @@ lsc recognizes icon glyphs across all three Nerd Font PUA ranges (the BMP area
 and both Supplementary areas), so any modern Nerd Font icon is stripped
 correctly when resolving the filename.
 
-## zsh functions
+## Shell functions
 
-`make install` puts `lsc.zsh` at `$PREFIX/share/lsc/lsc.zsh` (so by default
-`~/.local/share/lsc/lsc.zsh`) and prints the line to add to your `~/.zshrc`:
+The functions work in bash or zsh. `make install` puts `lsc.sh` at
+`$PREFIX/share/lsc/lsc.sh` (so by default `~/.local/share/lsc/lsc.sh`) and
+prints the line to add to your shell rc (`~/.bashrc` or `~/.zshrc`):
 
-    source ~/.local/share/lsc/lsc.zsh
+    source ~/.local/share/lsc/lsc.sh
 
 It loads on the next shell. (If you would rather not install it, you can source
-the copy in the repo instead — it is the same file.) That file defines a plain
-`ls` (eza with the manifest hidden via `_eza_ignore`) and the `setcomm` /
-`rmcomm` / `getcomm` wrappers around `lsc set|rm|get`. It merges with any
-`_eza_ignore` you already have, so it is safe to source after your own
-settings. The `lsc` command itself comes from `make install` and needs no
-function. In practice I alias `ls` straight to `lsc`; `lsc.zsh` shows where.
+the copy in the repo instead — it is the same file.) The file sets `_eza_ignore`
+to the manifest's filename, merging with any value you already have, so an
+eza-based `ls` can hide the manifest; and it defines the `setcomm` / `rmcomm` /
+`getcomm` wrappers around `lsc --set|--rm|--get`. The `lsc` command itself comes from
+`make install` and needs no function; to use the comment column for every
+listing, `alias ls=lsc`.
 
 ## Usage
 

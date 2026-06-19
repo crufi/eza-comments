@@ -1,7 +1,7 @@
-# comment: shell functions for lsc; source this from ~/.zshrc
+# comment: shell functions for lsc; source from your shell rc (bash or zsh)
 
 # Hide the manifest from listings, merging with any existing _eza_ignore.
-if [[ -n "$_eza_ignore" ]]; then
+if [ -n "$_eza_ignore" ]; then
   _eza_ignore="$_eza_ignore|.lsc-comments.json"
 else
   _eza_ignore=".lsc-comments.json"
@@ -12,6 +12,6 @@ fi
 #   alias ls=lsc
 
 # Manage comments.
-setcomm() { lsc set "$@"; }
-rmcomm()  { lsc rm  "$@"; }
-getcomm() { lsc get "$@"; }
+setcomm() { lsc --set "$@"; }
+rmcomm()  { lsc --rm  "$@"; }
+getcomm() { lsc --get "$@"; }

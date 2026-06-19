@@ -16,9 +16,9 @@ install:
 	datadir=$$(eval echo "$(DATADIR)"); \
 	mkdir -p "$$bindir" "$$datadir"; \
 	install -m 755 "$(SCRIPT)" "$$bindir/lsc"; \
-	install -m 644 lsc.zsh "$$datadir/lsc.zsh"; \
+	install -m 644 lsc.sh "$$datadir/lsc.sh"; \
 	echo "installed $$bindir/lsc"; \
-	echo "installed $$datadir/lsc.zsh"; \
+	echo "installed $$datadir/lsc.sh"; \
 	rp=$$(cd "$$bindir" 2>/dev/null && pwd -P); \
 	: "rp is bindir with symlinks resolved, so a synced ~/tools -> iCloud" \
 	  "symlink still matches a PATH entry written in its resolved form"; \
@@ -26,15 +26,15 @@ install:
 	  *":$$bindir:"*|*":$$rp:"*) ;; \
 	  *) echo "note: $$bindir is not on your PATH; add it to use 'lsc'";; \
 	esac; \
-	echo "for the ls / setcomm / rmcomm / getcomm functions, add to ~/.zshrc:"; \
-	echo "    source $$datadir/lsc.zsh"
+	echo "for the setcomm/rmcomm/getcomm helper functions, add to your shell rc (~/.bashrc or ~/.zshrc):"; \
+	echo "    source $$datadir/lsc.sh"
 
 uninstall:
 	@bindir=$$(eval echo "$(BINDIR)"); \
 	datadir=$$(eval echo "$(DATADIR)"); \
-	rm -f "$$bindir/lsc" "$$datadir/lsc.zsh"; \
+	rm -f "$$bindir/lsc" "$$datadir/lsc.sh"; \
 	rmdir "$$datadir" 2>/dev/null || true; \
-	echo "removed $$bindir/lsc and $$datadir/lsc.zsh"
+	echo "removed $$bindir/lsc and $$datadir/lsc.sh"
 
 test:
 	sh tests/run-tests.sh

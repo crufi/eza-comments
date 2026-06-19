@@ -13,15 +13,16 @@ Python file (`lsc.py`) plus thin zsh wrappers. There are no dependencies;
 `wcwidth` is used if importable but not required.
 
 `make install` puts the script on PATH as `lsc` (default `~/.local/bin/lsc`)
-and copies `lsc.zsh` to `$PREFIX/share/lsc/` (default `~/.local/share/lsc/`);
+and copies `lsc.sh` to `$PREFIX/share/lsc/` (default `~/.local/share/lsc/`);
 locations are overridable via PREFIX/BINDIR/DATADIR, and a leading `~` in an
-override is expanded in the recipe so it never lands on disk literally. Users
-source the installed `lsc.zsh` from `~/.zshrc`:
+override is expanded in the recipe so it never lands on disk literally. The
+functions are POSIX (work in bash or zsh); users source the installed `lsc.sh`
+from their shell rc:
 
-    ls()      -> eza ... --ignore-glob="$_eza_ignore"  # plain listing, manifest hidden
-    setcomm() -> lsc set "$@"    # write a manifest comment
-    rmcomm()  -> lsc rm  "$@"    # remove a manifest comment
-    getcomm() -> lsc get "$@"    # print effective comment
+    _eza_ignore += .lsc-comments.json   # manifest hidden from an eza-based ls
+    setcomm() -> lsc --set "$@"   # write a manifest comment
+    rmcomm()  -> lsc --rm  "$@"   # remove a manifest comment
+    getcomm() -> lsc --get "$@"   # print effective comment
 
 ## Where comments come from (precedence matters)
 
@@ -31,14 +32,14 @@ source the installed `lsc.zsh` from `~/.zshrc`:
 2. A per-directory JSON manifest, `.lsc-comments.json`, mapping bare filename
    to comment string.
 
-The magic line wins over the manifest. `set`/`rm` operate on the manifest only;
+The magic line wins over the manifest. `--set`/`--rm` operate on the manifest only;
 they warn (stderr) but still act when a magic line shadows the manifest.
 
 The manifest key `.` (constant `DIR_KEY`) is special: it is the directory's own
 caption, not a file. The lister reads `load_manifest(base).get(DIR_KEY)` and, if
 present, emits it as the first output line — left-aligned at column zero, in the
 comment style, above the listing. It is manifest-only (a directory has no head
-to scan) and is set with `lsc set . "..."` (which `os.path.split` resolves to
+to scan) and is set with `lsc --set . "..."` (which `os.path.split` resolves to
 `name == "."` in that directory's manifest, so no special-casing in `cmd_set`).
 
 ## Design decisions and their reasons (do not silently reverse these)
@@ -55,7 +56,7 @@ to scan) and is set with `lsc set . "..."` (which `os.path.split` resolves to
   path-keyed file. This makes comments travel when a directory is moved, and
   avoids one global merge-conflict magnet across machines. Trade-off: renaming
   a file orphans its entry (harmless; just stops matching).
-- **`set` refuses if the file does not exist** (catches typos / wrong cwd).
+- **`--set` refuses if the file does not exist** (catches typos / wrong cwd).
 - **Layout is terminal-width adaptive.** Name column scales to the terminal,
   comments clip with an ellipsis so no line ever wraps. When stdout is not a
   tty (piped), width falls back to `FALLBACK_WIDTH` and output is byte-
@@ -97,7 +98,7 @@ to scan) and is set with `lsc set . "..."` (which `os.path.split` resolves to
 
 - `read_comment(path, probe_evicted=True)` — effective comment:
   `magic_comment(path, probe_evicted) or manifest_comment(path)`. The lister
-  passes `probe_evicted=False` by default; `set`/`rm`/`get` keep the default.
+  passes `probe_evicted=False` by default; `--set`/`--rm`/`--get` keep the default.
 - `magic_comment` / `manifest_comment` — the two sources.
 - `_is_dataless` — macOS SF_DATALESS check; gates the magic-comment probe so a
   listing never forces an iCloud download.
@@ -108,7 +109,8 @@ to scan) and is set with `lsc set . "..."` (which `os.path.split` resolves to
 - `truncate_ansi` / `clip_text` — width-bounded, ANSI-safe cutting.
 - `_base_dir` — resolve `lsc DIR` names against DIR (single-dir case only).
 - `cmd_set` / `cmd_rm` / `cmd_get` — manifest CRUD; dispatched in `main` on
-  argv[1] in {set, rm, get}.
+  the `--set` / `--rm` / `--get` flags (not subcommands, so a path named
+  `set`/`rm`/`get` still lists).
 
 ## Tunables (top of file)
 
