@@ -24,7 +24,8 @@ Manage the manifest with action flags (any other args specify the path to list):
                                 against the current directory)
   lsc --fetch-icloud, --fetch   read evicted iCloud files too (forces iCloud
                                 download if needed; default skips this)
-  lsc --set FILE TEXT           set FILE's manifest comment
+  lsc --set FILE TEXT           set FILE's manifest comment (empty TEXT removes
+                                it, same as --rm)
   lsc --rm  FILE                remove FILE's manifest comment, if any
   lsc --get FILE                print FILE's effective comment (inline or manifest)
   lsc --help                    show this help
@@ -79,9 +80,9 @@ UNFETCHED_ICLOUD_PLACEHOLDER = "(not downloaded)"
 # (the parser needs one bare entry per line) and cannot be overridden.
 EZA_REQUIRED = ["--oneline"]
 
-# Default eza flags, each overridable via LSC_EZA_OPTS. --color=always and
-# --icons=always are forced on because output is piped here (eza would otherwise
-# drop them); --no-quotes keeps spaced filenames bare so comment lookups work
+# Default eza flags, each overridable via LSC_EZA_OPTS. '--color=always' and
+# '--icons=always' are forced on because output is piped here (eza would otherwise
+# drop them); '--no-quotes' keeps spaced filenames bare so comment lookups work
 # cleanly (see get_effective_comment / CLAUDE.md); the rest are implementer's preference.
 EZA_DEFAULTS = ["--color=always", "--icons=always", "--no-quotes",
                 "--classify", "--group-directories-first"]
@@ -240,7 +241,7 @@ def save_manifest(directory: str, data: dict) -> bool:
 
 
 def get_manifest_comment(path: str) -> str:
-    """Manifest comment for a single file path, or ""."""
+    """Manifest comment for a single file path, or empty string."""
     directory, name = os.path.split(path)
     return load_manifest(directory).get(name, "")
 
@@ -300,7 +301,7 @@ def get_effective_comment(path: str, fetch_icloud: bool = True) -> str:
     evicted (dataless) iCloud file, its contents are not read (so the lookup
     cannot trigger a download): the manifest still applies, and if it has no
     entry the UNFETCHED_ICLOUD_PLACEHOLDER is shown so the file is not silently
-    blank."""
+    blank. Otherwise, no comment returns an empty string."""
     if not fetch_icloud and is_dataless(path):
         return get_manifest_comment(path) or UNFETCHED_ICLOUD_PLACEHOLDER
     return get_magic_comment(path) or get_manifest_comment(path)
@@ -393,65 +394,70 @@ def clip_text(text: str, limit: int) -> str:
     return "".join(out) + ELLIPSIS
 
 
-# ----- subcommands ------------------------------------------------------------
+# ----- flags --------------------------------------------------------------------------------------
 
-# CONTINUE from here
-def warn_if_shadowed(path: str, action: str) -> None:
-    """If an in-file magic 'comment:' line exists, it takes precedence over the
+def warn_if_shadowed(path: str) -> None:
+    """If an in-file magic 'comment:' line exists, it takes precedence over any modified
     manifest in the listing. Warn (to stderr) but let the caller proceed."""
     magic = get_magic_comment(path)
     if magic:
         sys.stderr.write(
-            f'lsc: note: in-file "comment:" line shadows the manifest for '
-            f'{os.path.basename(path)}; the listing will {action} show: '
+            f'lsc: note: in-file "comment:" line shadows the lsc comment manifest for '
+            f'{os.path.basename(path)}; the listing will still show: '
             f'"{magic}"\n'
         )
 
 
-def cmd_set(argv) -> int:
-    if len(argv) != 2:
-        sys.stderr.write('usage: lsc --set FILE "comment"\n')
-        return 2
-    path, comment = argv
-    if not os.path.exists(path):
-        sys.stderr.write(f"lsc: {path}: no such file (refusing to set)\n")
-        return 1
+def cmd_set_rm(argv, remove: bool) -> int:
+    """Set or remove a file's manifest comment. With remove=False, argv is
+    FILE plus the comment text to store; '--set' refuses if the file is missing
+    (catches typos / wrong cwd). An empty comment ('--set FILE ""') removes the
+    entry, same as '--rm', since "" and a missing entry look identical in a
+    listing. With remove=True, argv is just FILE and the entry is deleted if
+    present. Either way a surviving in-file magic line is flagged afterward,
+    since that is what a listing will actually show."""
+    if remove:
+        if len(argv) != 1:
+            sys.stderr.write("usage: lsc --rm FILE\n")
+            return 2
+        path = argv[0]
+        comment = None
+    else:
+        if len(argv) != 2:
+            sys.stderr.write('usage: lsc --set FILE "comment"\n')
+            return 2
+        path, comment = argv
+        # '--set' refuses on a missing file (typo / wrong cwd); '--rm' does not (so
+        # an orphaned entry for a deleted/renamed file can still be cleared)
+        if not os.path.exists(path):
+            sys.stderr.write(f"lsc: {path}: target file does not exist (doing nothing)\n")
+            return 1
+
     directory, name = os.path.split(path)
     data = load_manifest(directory)
-    data[name] = comment
-    if not save_manifest(directory, data):
-        sys.stderr.write(
-            f"lsc: cannot write manifest in {directory or '.'} "
-            f"(read-only or permission denied)\n"
-        )
-        return 1
-    warn_if_shadowed(path, "still")
-    return 0
 
-
-def cmd_rm(argv) -> int:
-    if len(argv) != 1:
-        sys.stderr.write("usage: lsc --rm FILE\n")
-        return 2
-    path = argv[0]
-    directory, name = os.path.split(path)
-    data = load_manifest(directory)
-    if name in data:
-        del data[name]
+    if remove and name not in data:
+        # '--rm' warns if nothing to remove ('--set ""' does not):
+        sys.stderr.write(f"lsc: {name}: no manifest comment to remove (doing nothing)\n")
+        # we'll still warn_if_shadowed() below, since magic comment might persist
+    else:
+        if comment:
+            data[name] = comment
+        elif name in data:
+            del data[name]
         if not save_manifest(directory, data):
             sys.stderr.write(
-                f"lsc: cannot write manifest in {directory or '.'} "
-                f"(read-only or permission denied)\n"
+                f"lsc: cannot write manifest in {directory or '.'} :"
+                f"read-only or permission denied (doing nothing)\n"
             )
             return 1
-    else:
-        sys.stderr.write(f"lsc: {name}: no manifest comment to remove\n")
-    # even after removal, a magic line may keep showing a comment
-    warn_if_shadowed(path, "still")
+
+    warn_if_shadowed(path)
     return 0
 
 
 def cmd_get(argv) -> int:
+    """Display a single file's comment string, or an empty string (i.e., newline) if none."""
     if len(argv) != 1:
         sys.stderr.write("usage: lsc --get FILE\n")
         return 2
@@ -459,10 +465,12 @@ def cmd_get(argv) -> int:
     return 0
 
 
+# ----- main entry point ---------------------------------------------------------------------------
+
 def main(argv):
     args = argv[1:]
 
-    # --help / --version describe lsc itself and must not fall through to eza
+    # '--help'/'--version' describe lsc itself and must not fall through to eza
     # (which has its own). Long forms only.
     if "--help" in args:
         sys.stdout.write((__doc__ or "").strip() + "\n")
@@ -473,7 +481,11 @@ def main(argv):
 
     # Management actions are flags, not subcommands, so a bare word is always a
     # path to list (a directory literally named "set" would otherwise collide).
-    actions = {"--set": cmd_set, "--get": cmd_get, "--rm": cmd_rm}
+    actions = {
+        "--set": lambda a: cmd_set_rm(a, remove=False),
+        "--get": cmd_get,
+        "--rm": lambda a: cmd_set_rm(a, remove=True),
+    }
     chosen = [a for a in args if a in actions]
     if chosen:
         if len(chosen) > 1:
@@ -482,7 +494,7 @@ def main(argv):
         flag = chosen[0]
         return actions[flag]([a for a in args if a != flag])
 
-    # --fetch-icloud (or the shorthand --fetch) forces reading evicted iCloud
+    # '--fetch-icloud' (or the shorthand '--fetch') forces reading evicted iCloud
     # files for their magic comment; the default skips them so a listing never
     # triggers a download. The LSC_FETCH_ICLOUD env var does the same. These
     # flags are consumed here so they are never handed to eza.
@@ -494,13 +506,14 @@ def main(argv):
     args = [a for a in args if a not in fetch_flags]
 
     lines = run_eza(args)
-
     base = base_dir(args)
 
     names = [get_clean_filename(ln) for ln in lines]
+
     # Resolve each name against the listed directory so comment lookups work
     # when lsc is given a directory argument from a different cwd.
     paths = [os.path.join(base, n) if base else n for n in names]
+
     # Full visible width of each line (icon + name + classify char), since that
     # is what actually occupies terminal columns. Aligning on this keeps the
     # truncated and non-truncated branches on the same origin.
@@ -509,21 +522,19 @@ def main(argv):
 
     # A manifest entry keyed "." is the directory's own caption. It is shown
     # left-aligned, in the comment style, as a header line above the listing.
-    # Manifest only — a directory has no head to scan for a magic line — and set
-    # with `setcomm . "..."` (which stores it under "." in this dir's manifest).
+    # Manifest only (directories can't have magic comments); must set with '--set'.
     dir_comment = load_manifest(base).get(DIR_KEY, "")
 
     any_comments = any(comments)
 
-    # Terminal width. shutil falls back to FALLBACK_WIDTH when stdout is not a
-    # tty (e.g. lsc piped to a file), which is the right behavior — no point
-    # truncating to a window that isn't there.
+    # Terminal width (shutil falls back to FALLBACK_WIDTH when stdout is not a
+    # tty (e.g. lsc piped to a file))
     width = shutil.get_terminal_size((FALLBACK_WIDTH, 24)).columns
 
     # Adaptive name-truncation point: up to NAME_FRAC of the terminal, clamped
     # to [NAME_MIN, NAME_MAX]. Wide terminals show longer names before cutting.
     # Also bounded by the terminal width itself (minus room for icon+ellipsis)
-    # so an absurdly narrow window can't push a "truncated" name past the edge.
+    # so a skinny window can't push a "truncated" name past the edge.
     name_trunc = max(NAME_MIN, min(NAME_MAX, int(width * NAME_FRAC)))
     name_trunc = min(name_trunc, max(1, width - 3))
 
@@ -543,9 +554,12 @@ def main(argv):
     # most `width` columns so it never wraps into the next line.
     comment_budget = max(0, width - col)
 
+    # Render the listing line by line:
     out = []
+
     if dir_comment:
         out.append(style_comment(clip_text(dir_comment, width)))
+
     for line, fw, comment in zip(lines, full_vis, comments):
         shown = clip_text(comment, comment_budget) if comment else ""
         if any_truncate and fw > name_trunc:

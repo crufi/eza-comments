@@ -2,6 +2,7 @@
 
 test-psc.py
 CLAUDE.md
-lsc.py
 Makefile
-README.me
+README.md
+
+test on bach!

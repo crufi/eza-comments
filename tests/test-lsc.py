@@ -123,6 +123,38 @@ class LscTests(unittest.TestCase):
         data = json.loads((Path(self.dir) / ".lsc-comments.json").read_text())
         self.assertEqual(data["."], "dir note")
 
+    def test_rm_orphaned_entry_succeeds(self):
+        # --rm must clear a manifest entry whose file no longer exists (deleted
+        # or renamed); unlike --set, it does not require the file to be present.
+        self._manifest({"gone.txt": "old note"})
+        r = subprocess.run([sys.executable, LSC, "--rm", "gone.txt"],
+                           cwd=self.dir, capture_output=True, text=True,
+                           env=make_env([]))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        # the entry was the only one, so the manifest is removed entirely
+        self.assertFalse((Path(self.dir) / ".lsc-comments.json").exists())
+
+    def test_set_empty_comment_clears_entry(self):
+        # An empty comment means "no comment": `--set FILE ""` removes the
+        # entry (same as --rm), since "" and a missing entry are
+        # indistinguishable in a listing. The now-empty manifest is cleaned up.
+        self._touch("real.txt")
+        self._manifest({"real.txt": "an existing note"})
+        r = subprocess.run([sys.executable, LSC, "--set", "real.txt", ""],
+                           cwd=self.dir, capture_output=True, text=True,
+                           env=make_env([]))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse((Path(self.dir) / ".lsc-comments.json").exists())
+
+    def test_set_missing_file_is_refused(self):
+        # --set refuses a nonexistent target (typo / wrong cwd) and writes no
+        # manifest.
+        r = subprocess.run([sys.executable, LSC, "--set", "nope.txt", "x"],
+                           cwd=self.dir, capture_output=True, text=True,
+                           env=make_env([]))
+        self.assertEqual(r.returncode, 1)
+        self.assertFalse((Path(self.dir) / ".lsc-comments.json").exists())
+
     def test_help_exits_zero_without_invoking_eza(self):
         env = make_env(["should-not-appear.txt"])
         r = subprocess.run([sys.executable, LSC, "--help"],
@@ -140,7 +172,7 @@ class LscTests(unittest.TestCase):
     def test_dataless_placeholder_is_right_aligned(self):
         # The placeholder is pushed to the terminal's right edge, so the
         # visible line fills the full width and ends with the placeholder.
-        ph = lsc.DATALESS_PLACEHOLDER
+        ph = lsc.UNFETCHED_ICLOUD_PLACEHOLDER
         self._touch("clip.mov")
         self._manifest({"clip.mov": ph})  # equals the placeholder sentinel
         out = run_lsc(self.dir, make_env(["clip.mov"], columns=60))
@@ -200,7 +232,7 @@ class DatalessTests(unittest.TestCase):
         lsc.is_dataless = lambda p: True
         self.assertEqual(
             lsc.get_effective_comment(str(path), fetch_icloud=False),
-            lsc.DATALESS_PLACEHOLDER)
+            lsc.UNFETCHED_ICLOUD_PLACEHOLDER)
 
     def test_fetch_icloud_reads_magic(self):
         path = self._make()

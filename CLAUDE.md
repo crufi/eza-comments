@@ -57,6 +57,12 @@ to scan) and is set with `lsc --set . "..."` (which `os.path.split` resolves to
   avoids one global merge-conflict magnet across machines. Trade-off: renaming
   a file orphans its entry (harmless; just stops matching).
 - **`--set` refuses if the file does not exist** (catches typos / wrong cwd).
+- **`--set FILE ""` (empty comment) removes the entry**, same as `--rm`, since an
+  empty string and a missing entry are indistinguishable in a listing; this also
+  keeps the manifest from accumulating no-op `""` entries. The store-vs-delete
+  choice is therefore keyed on the comment being empty, not on which flag was
+  used. (One deliberate asymmetry: `--set FILE ""` is silent when there was no
+  entry, while `--rm` warns; `--set ""` reads as idempotent "ensure no comment".)
 - **Layout is terminal-width adaptive.** Name column scales to the terminal,
   comments clip with an ellipsis so no line ever wraps. When stdout is not a
   tty (piped), width falls back to `FALLBACK_WIDTH` and output is byte-
