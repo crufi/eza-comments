@@ -4,9 +4,8 @@
 # Stands in for the real `eza` binary via the EZA_BIN env var. It ignores all
 # arguments and prints one entry per line, formatted like eza --oneline
 # --icons=always --color=always: a leading Nerd Font icon glyph, a space, then
-# the name wrapped in a green SGR sequence. The icon is U+F086F, which lives in
-# a Supplementary Private Use Area -- the range that a BMP-only icon check
-# silently mishandled (see CLAUDE.md), so tests exercise the real failure mode.
+# the name wrapped in a green SGR sequence. (The icon is U+F086F, which lives in
+# a Supplementary PUA.)
 #
 # Names come from the FAKE_EZA env var, newline-separated.
 

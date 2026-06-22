@@ -16,6 +16,8 @@ for changes is mostly about keeping it that way.
 Run the tests from the repo root:
 
     sh tests/run-tests.sh
+    
+(or `make test`)
 
 If you fix a bug, add a test that fails before your change and passes after.
 The tests stub `eza` through the `EZA_BIN` env var, so they need no real eza
@@ -24,5 +26,5 @@ installed.
 ## Style
 
 - Filenames use hyphens, not underscores; shell scripts end in `.sh`.
-- Files start with a terse `comment:` magic line near the top so `lsc` can 
-  show comments about its code.
+- Source code files start with a terse `comment:` magic line near the top so `lsc` can 
+  show comments about its own code.

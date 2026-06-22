@@ -150,14 +150,14 @@ class LscTests(unittest.TestCase):
         self.assertEqual(len(visible), 60)
         self.assertTrue(visible.endswith(ph))
 
-    def test_probe_evicted_flag_is_consumed(self):
-        # Both the long flag and the --probe shorthand must be stripped before
+    def test_fetch_icloud_flag_is_consumed(self):
+        # Both the long flag and the --fetch shorthand must be stripped before
         # eza sees them; output is unaffected.
         names = ["a.txt", "b.txt"]
         for n in names:
             self._touch(n)
         env = make_env(names)
-        for flag in ("--probe-evicted", "--probe"):
+        for flag in ("--fetch-icloud", "--fetch"):
             r = subprocess.run([sys.executable, LSC, flag, self.dir],
                                capture_output=True, text=True, env=env)
             self.assertEqual(r.returncode, 0, r.stderr)
@@ -165,17 +165,17 @@ class LscTests(unittest.TestCase):
 
 
 class DatalessTests(unittest.TestCase):
-    # The evicted-iCloud guard. _is_dataless is monkeypatched because real
+    # The evicted-iCloud guard. is_dataless is monkeypatched because real
     # dataless files (and the SF_DATALESS st_flags bit) only exist on macOS, so
     # these run identically on a Linux CI box.
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.dir = self._tmp.name
-        self._orig = lsc._is_dataless
+        self._orig = lsc.is_dataless
 
     def tearDown(self):
-        lsc._is_dataless = self._orig
+        lsc.is_dataless = self._orig
         self._tmp.cleanup()
 
     def _make(self):
@@ -187,9 +187,9 @@ class DatalessTests(unittest.TestCase):
 
     def test_evicted_file_skips_magic_uses_manifest(self):
         path = self._make()
-        lsc._is_dataless = lambda p: True
+        lsc.is_dataless = lambda p: True
         self.assertEqual(
-            lsc.read_comment(path, probe_evicted=False), "from manifest")
+            lsc.get_effective_comment(path, fetch_icloud=False), "from manifest")
 
     def test_evicted_file_without_comment_shows_placeholder(self):
         # No manifest entry and the file is not read -> the placeholder fills
@@ -197,22 +197,22 @@ class DatalessTests(unittest.TestCase):
         path = Path(self.dir) / "vacation.mov"
         path.write_text("# comment: unreachable while evicted\n",
                         encoding="utf-8")
-        lsc._is_dataless = lambda p: True
+        lsc.is_dataless = lambda p: True
         self.assertEqual(
-            lsc.read_comment(str(path), probe_evicted=False),
+            lsc.get_effective_comment(str(path), fetch_icloud=False),
             lsc.DATALESS_PLACEHOLDER)
 
-    def test_probe_evicted_reads_magic(self):
+    def test_fetch_icloud_reads_magic(self):
         path = self._make()
-        lsc._is_dataless = lambda p: True
+        lsc.is_dataless = lambda p: True
         self.assertEqual(
-            lsc.read_comment(path, probe_evicted=True), "from magic line")
+            lsc.get_effective_comment(path, fetch_icloud=True), "from magic line")
 
     def test_local_file_always_reads_magic(self):
         path = self._make()
-        lsc._is_dataless = lambda p: False
+        lsc.is_dataless = lambda p: False
         self.assertEqual(
-            lsc.read_comment(path, probe_evicted=False), "from magic line")
+            lsc.get_effective_comment(path, fetch_icloud=False), "from magic line")
 
 
 EZA = shutil.which("eza")
@@ -268,6 +268,52 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         for line in r.stdout.splitlines():
             self.assertLessEqual(len(ANSI_RE.sub("", line)), cols, repr(line))
+
+
+class EzaOptsTests(unittest.TestCase):
+    # LSC_EZA_OPTS: a user flag replaces a matching default in place (by option
+    # identity, aliases included); unrelated flags append; --oneline is forced.
+
+    def setUp(self):
+        self._saved = os.environ.get("LSC_EZA_OPTS")
+
+    def tearDown(self):
+        if self._saved is None:
+            os.environ.pop("LSC_EZA_OPTS", None)
+        else:
+            os.environ["LSC_EZA_OPTS"] = self._saved
+
+    def _opts(self, value=None):
+        if value is None:
+            os.environ.pop("LSC_EZA_OPTS", None)
+        else:
+            os.environ["LSC_EZA_OPTS"] = value
+        return lsc.eza_opts()
+
+    def test_defaults_when_unset(self):
+        self.assertEqual(self._opts(), lsc.EZA_DEFAULTS)
+
+    def test_oneline_is_required_and_separate(self):
+        self.assertEqual(lsc.EZA_REQUIRED, ["--oneline"])
+
+    def test_override_replaces_default_in_place_no_duplicate(self):
+        opts = self._opts("--icons=never")
+        self.assertIn("--icons=never", opts)
+        self.assertNotIn("--icons=always", opts)
+        self.assertEqual(sum(o.split("=")[0] == "--icons" for o in opts), 1)
+        self.assertIn("--classify", opts)  # other defaults intact
+
+    def test_alias_spelling_matches_default(self):
+        opts = self._opts("--colour=never -F=never")  # British + short -F
+        self.assertNotIn("--color=always", opts)
+        self.assertIn("--colour=never", opts)
+        self.assertNotIn("--classify", opts)
+        self.assertIn("-F=never", opts)
+
+    def test_unrelated_flag_is_appended(self):
+        opts = self._opts("--git")
+        self.assertEqual(opts[:len(lsc.EZA_DEFAULTS)], lsc.EZA_DEFAULTS)
+        self.assertEqual(opts[-1], "--git")
 
 
 if __name__ == "__main__":

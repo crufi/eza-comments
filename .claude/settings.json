@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(perl -pi -e 's/\\\\b_\\(is_pua|manifest_path|is_dataless|opt_key|eza_opts|base_dir|style_comment|warn_if_shadowed\\)\\\\b/$1/g' lsc.py tests/test-lsc.py CLAUDE.md)",
+      "Bash(python3 tests/test-lsc.py)"
+    ]
+  }
+}

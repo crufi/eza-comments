@@ -64,15 +64,15 @@ to scan) and is set with `lsc --set . "..."` (which `os.path.split` resolves to
 
 ## Gotchas that caused real bugs (regression-prone areas)
 
-- **Nerd Font icons span three PUA ranges.** `visible_name` strips the leading
-  icon glyph; `_is_pua` must cover BMP (U+E000–U+F8FF) AND both Supplementary
+- **Nerd Font icons span three PUA ranges.** `get_clean_filename` strips the leading
+  icon glyph; `is_pua` must cover the BMP PUA (U+E000–U+F8FF) AND both Supplementary
   areas (U+F0000–U+FFFFD, U+100000–U+10FFFD). A BMP-only check silently failed
   on real eza output (icons like U+F086F), producing mangled names and missing
   comments. Test with a Supplementary-PUA icon, not just U+E0A0.
-- **eza filenames must be bare for lookups to work.** `read_comment` opens the
+- **eza filenames must be bare for lookups to work.** `get_effective_comment` opens the
   name eza printed. If eza quotes spaced names (`'My File.txt'`) the open
-  fails. `EZA_BASE` controls this; keep `--no-quotes` if spaced filenames need
-  comments.
+  fails. `--no-quotes` (in `EZA_DEFAULTS`) keeps them bare; overriding it via
+  `LSC_EZA_OPTS` loses comments on spaced names.
 - **ANSI-aware truncation.** Never slice a colored line at a visible-column
   count without preserving escape sequences and appending a reset, or color
   bleeds / escapes get cut mid-sequence. See `truncate_ansi` and `clip_text`.
@@ -86,9 +86,9 @@ to scan) and is set with `lsc --set . "..."` (which `os.path.split` resolves to
 - **Reading a file triggers iCloud downloads.** The magic-comment probe opens
   every listed file's head; for an evicted ("Optimize Mac Storage") file that
   read forces macOS to materialize it from iCloud, which is slow and uses data.
-  The listing therefore skips the probe for dataless files (`_is_dataless`, the
-  `SF_DATALESS` st_flags bit) unless `--probe-evicted` / `--probe` /
-  `LSC_PROBE_EVICTED` is
+  The listing therefore skips the probe for dataless files (`is_dataless`, the
+  `SF_DATALESS` st_flags bit) unless `--fetch-icloud` / `--fetch` /
+  `LSC_FETCH_ICLOUD` is
   set, falling back to the manifest (or `DATALESS_PLACEHOLDER` when the manifest
   has no entry). Do not move the probe ahead of this guard,
   and do not assume `stat` is enough — it is the open/read that downloads, not
@@ -96,18 +96,18 @@ to scan) and is set with `lsc --set . "..."` (which `os.path.split` resolves to
 
 ## Key functions
 
-- `read_comment(path, probe_evicted=True)` — effective comment:
-  `magic_comment(path, probe_evicted) or manifest_comment(path)`. The lister
-  passes `probe_evicted=False` by default; `--set`/`--rm`/`--get` keep the default.
-- `magic_comment` / `manifest_comment` — the two sources.
-- `_is_dataless` — macOS SF_DATALESS check; gates the magic-comment probe so a
+- `get_effective_comment(path, fetch_icloud=True)` — effective comment:
+  `get_magic_comment(path, fetch_icloud) or get_manifest_comment(path)`. The lister
+  passes `fetch_icloud=False` by default; `--set`/`--rm`/`--get` keep the default.
+- `get_magic_comment` / `get_manifest_comment` — the two sources.
+- `is_dataless` — macOS SF_DATALESS check; gates the magic-comment probe so a
   listing never forces an iCloud download.
 - `search_head` — binary-guarded, islice-capped (50 lines) regex scan.
 - `load_manifest` / `save_manifest` — JSON read / atomic write (temp+rename,
   auto-deletes when empty, returns False on failure).
-- `visible_name` / `_is_pua` — recover the bare filename from an eza line.
+- `get_clean_filename` / `is_pua` — recover the bare filename from an eza line.
 - `truncate_ansi` / `clip_text` — width-bounded, ANSI-safe cutting.
-- `_base_dir` — resolve `lsc DIR` names against DIR (single-dir case only).
+- `base_dir` — resolve `lsc DIR` names against DIR (single-dir case only).
 - `cmd_set` / `cmd_rm` / `cmd_get` — manifest CRUD; dispatched in `main` on
   the `--set` / `--rm` / `--get` flags (not subcommands, so a path named
   `set`/`rm`/`get` still lists).
@@ -116,7 +116,7 @@ to scan) and is set with `lsc --set . "..."` (which `os.path.split` resolves to
 
     MANIFEST_NAME, NAME_FRAC, NAME_MIN, NAME_MAX, GAP, FALLBACK_WIDTH,
     DATALESS_PLACEHOLDER,
-    COMMENT_STYLE, EZA_BASE
+    COMMENT_STYLE, EZA_REQUIRED, EZA_DEFAULTS, EZA_OPT_KEY
 
 ## Testing notes
 

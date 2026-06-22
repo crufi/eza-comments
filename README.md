@@ -68,8 +68,8 @@ binaries where a magic line cannot live.
 
     lsc                 list the current directory with comments
     lsc DIR             list DIR (comments resolved against DIR)
-    lsc --probe-evicted read evicted iCloud files too (default skips them)
-    lsc --probe         shorthand for --probe-evicted
+    lsc --fetch-icloud  read evicted iCloud files too (default skips them)
+    lsc --fetch         shorthand for --fetch-icloud
     lsc --set FILE TEXT set FILE's manifest comment
     lsc --set . TEXT    caption the directory (header line above the listing)
     lsc --rm  FILE      remove FILE's manifest comment
@@ -184,6 +184,23 @@ record which directory each line came from.
 To pin the column instead of letting it shift as you resize, set `NAME_MIN`
 and `NAME_MAX` close together (e.g. both near 38).
 
+## Customizing the eza options
+
+lsc passes a small set of eza flags by default (`--color=always`,
+`--icons=always`, `--no-quotes`, `--classify`, `--group-directories-first`).
+Set `LSC_EZA_OPTS` to change them, writing flags as if you were passing them
+straight to eza:
+
+    export LSC_EZA_OPTS="--icons=never --sort=size --git"
+
+A flag that touches an option already in the defaults replaces that default in
+place (so eza never sees a conflicting pair) — aliases included, so
+`--colour=never` or `-F=never` are recognized as `--color` and `--classify`.
+Any other flag is appended. Only `--oneline` is fixed: lsc's parser needs one
+entry per line, so it is always sent and cannot be overridden. Note that
+dropping `--no-quotes` makes comments disappear on filenames containing spaces
+(eza quotes those names, and the lookup opens the name verbatim).
+
 ## Notes and caveats
 
 - iCloud-evicted files are not read by default. Reading a file's head to find
@@ -192,7 +209,7 @@ and `NAME_MAX` close together (e.g. both near 38).
   shows their manifest comment if one exists, otherwise a `(not downloaded)`
   placeholder, right-aligned to the terminal edge to read as a status note
   rather than a description (`DATALESS_PLACEHOLDER`; set to `""` to disable). Pass
-  `--probe-evicted` / `--probe` (or set `LSC_PROBE_EVICTED=1`) to read them anyway,
+  `--fetch-icloud` / `--fetch` (or set `LSC_FETCH_ICLOUD=1`) to read them anyway,
   accepting the downloads. This is a no-op off macOS, where the dataless flag
   does not exist.
 - The manifest is keyed by bare filename and lives in the directory, so it

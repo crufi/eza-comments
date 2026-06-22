@@ -2,31 +2,36 @@
 """
 lsc - eza listing with an aligned comment column.
 
-Runs eza once, then annotates each line with a short comment, aligned into a
-column. ANSI colors and Nerd Font icons from eza are preserved; truncation is
-ANSI-aware so escape sequences are never sliced mid-code.
+Allows annotating files (and directories) with short comments that show up
+in a column next to file names in an `eza` listing. ANSI colors and Nerd Font
+icons from eza are preserved; truncation is ANSI-aware so escape sequences
+are never sliced mid-code.
 
-Comments come from two places, in order of precedence:
-  1. an in-file magic line near the top of a text file:
+Comments can come from two places, in order of precedence:
+
+  1. an inline magic line near the top of a text file:
        //  #comment: <text>   (case-insensitive, optional indent)
-  2. a per-directory manifest, MANIFEST_NAME, mapping filename -> comment.
-     This is plain JSON content, so it syncs through iCloud and travels with
-     the directory (unlike xattrs, which iCloud strips).
 
-Manage the manifest with action flags (anything else is a path to list):
-  lsc                 list the current directory with comments
-  lsc DIR             list DIR (comments resolved against DIR)
-  lsc --probe-evicted read evicted iCloud files too (default skips them, so a
-                      listing never forces an iCloud download); --probe is short
-                      for the same flag
-  lsc --set FILE TEXT set FILE's manifest comment (refuses if FILE is absent)
-  lsc --rm  FILE      remove FILE's manifest comment
-  lsc --get FILE      print FILE's effective comment
-  lsc --help          show this help and exit
-  lsc --version       print the version and exit
+  2. a per-directory manifest, MANIFEST_NAME, mapping filename -> comment.
+     This is plain JSON content, so it can sync through iCloud and travels with
+     the directory (unlike, e.g., xattrs, which iCloud sync may strip).
+
+Manage the manifest with action flags (any other args specify the path to list):
+
+  lsc                           list the current directory with comments
+  lsc DIR                       list specified directory (one dir only; with
+                                multiple paths or globs, comments resolve
+                                against the current directory)
+  lsc --fetch-icloud, --fetch   read evicted iCloud files too (forces iCloud
+                                download if needed; default skips this)
+  lsc --set FILE TEXT           set FILE's manifest comment
+  lsc --rm  FILE                remove FILE's manifest comment, if any
+  lsc --get FILE                print FILE's effective comment (inline or manifest)
+  lsc --help                    show this help
+  lsc --version                 show version number
 
 --set and --rm warn (on stderr) but still act when an in-file magic line shadows
-the manifest, since the magic line is what the listing will actually show.
+the manifest, since the magic line is still what a listing will actually show.
 
 A manifest entry keyed "." (set with `lsc --set . "..."`) is the directory's own
 caption: it prints left-aligned, in the comment style, as a header line above
@@ -41,6 +46,7 @@ import sys
 import json
 import shutil
 import subprocess
+import shlex
 from itertools import islice
 
 __version__ = "0.1.0"
@@ -60,25 +66,52 @@ GAP = 2                # spaces between names and the comment column
 FALLBACK_WIDTH = 80    # used when terminal width can't be detected (piped)
 
 # ANSI styling applied to the comment text. "2" = dim (renders gray in most
-# themes), "3" = italic. Set to "" for plain text. Reset is appended
-# automatically.
+# themes), "3" = italic. Set to "" for plain text.
 COMMENT_STYLE = "2;3"
 
 # Shown in the comment column for an evicted (dataless) iCloud file that has no
 # manifest comment, so the line reads as deliberately not-yet-downloaded rather
 # than blank. It appears only while the listing is skipping evicted files (i.e.
-# without --probe-evicted). Set to "" to leave such files blank instead.
-DATALESS_PLACEHOLDER = "(not downloaded)"
+# without --fetch-icloud). Set to "" to leave such files blank instead.
+UNFETCHED_ICLOUD_PLACEHOLDER = "(not downloaded)"
 
-# eza options to mirror the interactive `ls` shell function. --icons=always
-# and --color=always are forced because output is piped here but we still want
-# them rendered; 'oneline' gives one bare entry per line.
-EZA_BASE = ["--oneline", "--color=always", "--icons=always", "--classify", "--no-quotes", "--group-directories-first"]
+# eza flags lsc always passes. --oneline is the only structural requirement
+# (the parser needs one bare entry per line) and cannot be overridden.
+EZA_REQUIRED = ["--oneline"]
 
-# classify indicator chars eza may append to a name (--classify)
+# Default eza flags, each overridable via LSC_EZA_OPTS. --color=always and
+# --icons=always are forced on because output is piped here (eza would otherwise
+# drop them); --no-quotes keeps spaced filenames bare so comment lookups work
+# cleanly (see get_effective_comment / CLAUDE.md); the rest are implementer's preference.
+EZA_DEFAULTS = ["--color=always", "--icons=always", "--no-quotes",
+                "--classify", "--group-directories-first"]
+
+# Match flag variants to a single key per flag to allow overriding defaults:
+#
+# LSC_EZA_OPTS lets the user pass flags as if straight to eza. A user flag whose
+# option is already in EZA_DEFAULTS replaces that default in place (so eza never
+# sees a duplicate/conflicting pair); anything else is appended. Matching is by
+# option identity, so every spelling eza accepts for a defaulted option maps to
+# one key here -- only the few options EZA_DEFAULTS sets need an entry.
+EZA_OPT_KEY = {
+    "--color": "color",
+    "--colour": "color",
+
+    "--icons": "icons",
+
+    "--quotes": "quotes",
+    "--no-quotes": "quotes",
+
+    "--classify": "classify",
+    "-F": "classify",
+
+    "--group-directories-first": "group",
+}
+
+# classification indicator chars eza may append to a name (--classify)
 CLASSIFY_CHARS = "*/=>@|"
 
-ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+ANSI_STYLING_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 # ----- width handling ---------------------------------------------------------
 
@@ -89,20 +122,19 @@ try:
         w = _wcswidth(s)
         return w if w >= 0 else len(s)
 except ImportError:
-    # Fallback: count codepoints, but give Nerd Font PUA glyphs (U+E000-U+F8FF)
-    # a width of 1. Good enough without the wcwidth dependency.
+    # Fallback: count codepoints, good enough without the wcwidth dependency.
     def vis_width(s: str) -> int:
         return len(s)
 
 
-def strip_ansi(s: str) -> str:
-    return ANSI_RE.sub("", s)
+def strip_ansi_styling(s: str) -> str:
+    return ANSI_STYLING_RE.sub("", s)
 
 
-def _is_pua(ch: str) -> bool:
+def is_pua(ch: str) -> bool:
     """True if ch is in any Private Use Area used by Nerd Fonts:
     BMP (U+E000-U+F8FF) or the Supplementary areas (U+F0000-U+FFFFD,
-    U+100000-U+10FFFD). Nerd Font glyphs are spread across all three."""
+    U+100000-U+10FFFD)."""
     o = ord(ch)
     return (
         0xE000 <= o <= 0xF8FF
@@ -111,16 +143,16 @@ def _is_pua(ch: str) -> bool:
     )
 
 
-def visible_name(line: str) -> str:
+def get_clean_filename(line: str) -> str:
     """Visible filename: ANSI stripped, leading icon+space removed if present,
     trailing classify indicator removed."""
-    plain = strip_ansi(line)
+    plain = strip_ansi_styling(line)
     # eza with --icons prints: "<glyph> name". The glyph is a single PUA char
     # followed by a space. Strip a leading non-space run + one space.
     if " " in plain:
         head, _, rest = plain.partition(" ")
         # only treat as an icon if head is a single PUA glyph
-        if len(head) == 1 and _is_pua(head):
+        if len(head) == 1 and is_pua(head):
             plain = rest
     if plain and plain[-1] in CLASSIFY_CHARS:
         plain = plain[:-1]
@@ -134,13 +166,12 @@ def truncate_ansi(line: str, limit: int) -> str:
     out = []
     width = 0
     i = 0
-    n = len(line)
-    saw_ansi = False
-    while i < n:
-        m = ANSI_RE.match(line, i)
+    saw_ansi_styling = False
+    while i < len(line):
+        m = ANSI_STYLING_RE.match(line, i)
         if m:
             out.append(m.group())
-            saw_ansi = True
+            saw_ansi_styling = True
             i = m.end()
             continue
         ch = line[i]
@@ -150,8 +181,8 @@ def truncate_ansi(line: str, limit: int) -> str:
         out.append(ch)
         width += cw
         i += 1
-    if saw_ansi:
-        out.append("\x1b[0m")  # ensure we don't bleed color past the cut
+    if saw_ansi_styling:
+        out.append("\x1b[0m")  # reset any applied ANSI styling
     return "".join(out)
 
 
@@ -161,9 +192,9 @@ def truncate_ansi(line: str, limit: int) -> str:
 # mapping bare filename -> comment string. This is plain file content, so it
 # syncs through iCloud and travels with the directory (unlike xattrs, which
 # iCloud strips). A magic "comment:" line inside a text file still takes
-# precedence over the manifest; see read_comment.
+# precedence over the manifest; see get_effective_comment.
 
-def _manifest_path(directory: str) -> str:
+def get_manifest_path(directory: str) -> str:
     return os.path.join(directory or ".", MANIFEST_NAME)
 
 
@@ -171,7 +202,7 @@ def load_manifest(directory: str) -> dict:
     """Return the directory's comment manifest as a dict, or {} if absent or
     unreadable."""
     try:
-        with open(_manifest_path(directory), encoding="utf-8") as f:
+        with open(get_manifest_path(directory), encoding="utf-8") as f:
             data = json.load(f)
         return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
@@ -184,7 +215,7 @@ def save_manifest(directory: str, data: dict) -> bool:
     success, False if the directory isn't writable or the write fails (the
     caller reports it); never raises for an ordinary permission or I/O problem,
     and never leaves an orphaned temp file behind."""
-    path = _manifest_path(directory)
+    path = get_manifest_path(directory)
     if not data:
         try:
             os.remove(path)
@@ -208,20 +239,19 @@ def save_manifest(directory: str, data: dict) -> bool:
     return True
 
 
-def manifest_comment(path: str) -> str:
+def get_manifest_comment(path: str) -> str:
     """Manifest comment for a single file path, or ""."""
     directory, name = os.path.split(path)
     return load_manifest(directory).get(name, "")
 
 
-# magic-comment line scanned as a fallback when no xattr is present:
-#   //  #  ;   comment: <text>     (case-insensitive, optional indent)
-_MAGIC_COMMENT_RE = re.compile(r"(?i)^\s*(?://|#|--|;)\s*comment:\s*(.*)$")
-
+# regex for magic-comment line:
+#   //  #  ;  --  comment: <text>     (case-insensitive, optional indent)
+MAGIC_COMMENT_RE = re.compile(r"(?i)^\s*(?://|#|--|;)\s*comment:\s*(.*)$")
 
 def search_head(path: str, pattern, max_lines: int = 50):
     """First regex match within the first max_lines lines, or None.
-    Binary / undecodable / unreadable files return None."""
+    Binary/undecodable/unreadable files return None."""
     rx = re.compile(pattern) if isinstance(pattern, str) else pattern
     try:
         with open(path, "rb") as fb:
@@ -240,13 +270,13 @@ def search_head(path: str, pattern, max_lines: int = 50):
 # macOS marks an evicted ("Optimize Mac Storage") iCloud file as dataless: its
 # contents are not on disk, and the first read of one forces a download. The
 # listing skips the magic-comment probe for such files so it never silently
-# pulls data down; pass probe_evicted=True (the lister's --probe-evicted flag)
+# pulls data down; pass fetch_icloud=True (the lister's --fetch-icloud flag)
 # to read them anyway. st_flags is macOS-only, so this is a no-op elsewhere
-# (e.g. Linux), where _is_dataless always returns False and nothing is skipped.
+# (e.g. Linux), where is_dataless always returns False and nothing is skipped.
 SF_DATALESS = 0x40000000
 
 
-def _is_dataless(path: str) -> bool:
+def is_dataless(path: str) -> bool:
     """True if path is an evicted iCloud file whose bytes are not local. Uses
     the macOS-only SF_DATALESS st_flags bit; returns False where st_flags is
     unavailable. stat() alone does not trigger a download."""
@@ -257,41 +287,69 @@ def _is_dataless(path: str) -> bool:
     return bool(flags & SF_DATALESS)
 
 
-def magic_comment(path: str) -> str:
+def get_magic_comment(path: str) -> str:
     """The in-file "comment:" magic line text, or "". Text files only."""
-    if m := search_head(path, _MAGIC_COMMENT_RE):
+    if m := search_head(path, MAGIC_COMMENT_RE):
         return m.group(1).strip()
     return ""
 
 
-def read_comment(path: str, probe_evicted: bool = True) -> str:
+def get_effective_comment(path: str, fetch_icloud: bool = True) -> str:
     """Effective comment for the listing. A magic "comment:" line wins, then
-    the per-directory manifest. When probe_evicted is False and the file is an
+    the per-directory manifest. When fetch_icloud is False and the file is an
     evicted (dataless) iCloud file, its contents are not read (so the lookup
     cannot trigger a download): the manifest still applies, and if it has no
-    entry the DATALESS_PLACEHOLDER is shown so the file is not silently blank."""
-    if not probe_evicted and _is_dataless(path):
-        return manifest_comment(path) or DATALESS_PLACEHOLDER
-    return magic_comment(path) or manifest_comment(path)
+    entry the UNFETCHED_ICLOUD_PLACEHOLDER is shown so the file is not silently
+    blank."""
+    if not fetch_icloud and is_dataless(path):
+        return get_manifest_comment(path) or UNFETCHED_ICLOUD_PLACEHOLDER
+    return get_magic_comment(path) or get_manifest_comment(path)
 
 
-# ----- main -------------------------------------------------------------------
+# ----- options handling ---------------------------------------------------------------------------
+
+def opt_key(flag):
+    """Identity key for an eza flag, ignoring any =value; None if the flag is
+    not one of the options lsc sets a default for."""
+    return EZA_OPT_KEY.get(flag.split("=", 1)[0])
+
+
+def eza_opts():
+    """EZA_DEFAULTS with any LSC_EZA_OPTS overrides applied in place, plus the
+    user's extra (non-defaulted) flags appended. Lets the user pass flags as if
+    straight to eza while lsc avoids handing eza a duplicate of an option it
+    already defaults."""
+    override = {}   # option key -> the user's flag, replacing the default
+    extra = []      # user flags that touch no default
+    for flag in shlex.split(os.environ.get("LSC_EZA_OPTS", "")):
+        key = opt_key(flag)
+        if key is None:
+            extra.append(flag)
+        else:
+            override[key] = flag
+    merged = [override.get(opt_key(d), d) for d in EZA_DEFAULTS]
+    return merged + extra
+
 
 def run_eza(args):
     ignore = os.environ.get("_eza_ignore", "")
     eza_bin = os.environ.get("EZA_BIN", "eza")
-    cmd = [eza_bin, *EZA_BASE]
+    cmd = [eza_bin, *EZA_REQUIRED, *eza_opts()]
     if ignore:
         cmd.append(f"--ignore-glob={ignore}")
     cmd.extend(args)
-    res = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True)
+    except OSError as e:
+        sys.stderr.write(f"lsc: cannot run {eza_bin!r}: {e}\n")
+        sys.exit(1)
     if res.returncode != 0:
         sys.stderr.write(res.stderr)
         sys.exit(res.returncode)
-    return [ln for ln in res.stdout.splitlines()]
+    return res.stdout.splitlines()
 
 
-def _base_dir(args):
+def base_dir(args):
     """If the args denote a single directory to list, return it so bare names
     from eza can be resolved against it. Otherwise return "" (names are taken
     relative to the current directory, the existing behavior).
@@ -306,7 +364,7 @@ def _base_dir(args):
     return ""
 
 
-def _style_comment(text: str) -> str:
+def style_comment(text: str) -> str:
     if not COMMENT_STYLE:
         return text
     return f"\x1b[{COMMENT_STYLE}m{text}\x1b[0m"
@@ -319,8 +377,9 @@ def clip_text(text: str, limit: int) -> str:
         return ""
     if vis_width(text) <= limit:
         return text
+    ELLIPSIS = "\u2026"
     if limit == 1:
-        return "\u2026"
+        return ELLIPSIS
     # reserve one column for the ellipsis
     budget = limit - 1
     out = []
@@ -331,15 +390,16 @@ def clip_text(text: str, limit: int) -> str:
             break
         out.append(ch)
         w += cw
-    return "".join(out) + "\u2026"
+    return "".join(out) + ELLIPSIS
 
 
 # ----- subcommands ------------------------------------------------------------
 
-def _warn_if_shadowed(path: str, action: str) -> None:
+# CONTINUE from here
+def warn_if_shadowed(path: str, action: str) -> None:
     """If an in-file magic 'comment:' line exists, it takes precedence over the
     manifest in the listing. Warn (to stderr) but let the caller proceed."""
-    magic = magic_comment(path)
+    magic = get_magic_comment(path)
     if magic:
         sys.stderr.write(
             f'lsc: note: in-file "comment:" line shadows the manifest for '
@@ -365,7 +425,7 @@ def cmd_set(argv) -> int:
             f"(read-only or permission denied)\n"
         )
         return 1
-    _warn_if_shadowed(path, "still")
+    warn_if_shadowed(path, "still")
     return 0
 
 
@@ -387,7 +447,7 @@ def cmd_rm(argv) -> int:
     else:
         sys.stderr.write(f"lsc: {name}: no manifest comment to remove\n")
     # even after removal, a magic line may keep showing a comment
-    _warn_if_shadowed(path, "still")
+    warn_if_shadowed(path, "still")
     return 0
 
 
@@ -395,7 +455,7 @@ def cmd_get(argv) -> int:
     if len(argv) != 1:
         sys.stderr.write("usage: lsc --get FILE\n")
         return 2
-    print(read_comment(argv[0]))
+    print(get_effective_comment(argv[0]))
     return 0
 
 
@@ -422,30 +482,30 @@ def main(argv):
         flag = chosen[0]
         return actions[flag]([a for a in args if a != flag])
 
-    # --probe-evicted (or the shorthand --probe) forces reading evicted iCloud
+    # --fetch-icloud (or the shorthand --fetch) forces reading evicted iCloud
     # files for their magic comment; the default skips them so a listing never
-    # triggers a download. The LSC_PROBE_EVICTED env var does the same. These
+    # triggers a download. The LSC_FETCH_ICLOUD env var does the same. These
     # flags are consumed here so they are never handed to eza.
-    probe_flags = {"--probe-evicted", "--probe"}
-    probe_evicted = (
-        any(a in probe_flags for a in args)
-        or bool(os.environ.get("LSC_PROBE_EVICTED"))
+    fetch_flags = {"--fetch-icloud", "--fetch"}
+    fetch_icloud = (
+        any(a in fetch_flags for a in args)
+        or bool(os.environ.get("LSC_FETCH_ICLOUD"))
     )
-    args = [a for a in args if a not in probe_flags]
+    args = [a for a in args if a not in fetch_flags]
 
     lines = run_eza(args)
 
-    base = _base_dir(args)
+    base = base_dir(args)
 
-    names = [visible_name(ln) for ln in lines]
+    names = [get_clean_filename(ln) for ln in lines]
     # Resolve each name against the listed directory so comment lookups work
     # when lsc is given a directory argument from a different cwd.
     paths = [os.path.join(base, n) if base else n for n in names]
     # Full visible width of each line (icon + name + classify char), since that
     # is what actually occupies terminal columns. Aligning on this keeps the
     # truncated and non-truncated branches on the same origin.
-    full_vis = [vis_width(strip_ansi(ln)) for ln in lines]
-    comments = [read_comment(p, probe_evicted) for p in paths]
+    full_vis = [vis_width(strip_ansi_styling(ln)) for ln in lines]
+    comments = [get_effective_comment(p, fetch_icloud) for p in paths]
 
     # A manifest entry keyed "." is the directory's own caption. It is shown
     # left-aligned, in the comment style, as a header line above the listing.
@@ -485,26 +545,26 @@ def main(argv):
 
     out = []
     if dir_comment:
-        out.append(_style_comment(clip_text(dir_comment, width)))
+        out.append(style_comment(clip_text(dir_comment, width)))
     for line, fw, comment in zip(lines, full_vis, comments):
         shown = clip_text(comment, comment_budget) if comment else ""
         if any_truncate and fw > name_trunc:
             # always truncate when truncation is in play, even with no comment
             cut = truncate_ansi(line, name_trunc)
-            tail = _style_comment(shown) if shown else ""
+            tail = style_comment(shown) if shown else ""
             out.append(f"{cut}\u2026 {tail}".rstrip())
         elif shown:
-            # The dataless placeholder is right-aligned to the terminal's right
+            # The unfetched iCloud placeholder is right-aligned to the terminal's right
             # edge (it's a status note, not a description); a real comment sits
             # left-aligned in the shared column. Fall back to the column if the
             # name leaves too little room to right-align cleanly.
-            if comment == DATALESS_PLACEHOLDER:
+            if comment == UNFETCHED_ICLOUD_PLACEHOLDER:
                 rpad = width - fw - vis_width(comment)
                 if rpad >= GAP:
-                    out.append(f"{line}{' ' * rpad}{_style_comment(comment)}")
+                    out.append(f"{line}{' ' * rpad}{style_comment(comment)}")
                     continue
             pad = col - fw
-            out.append(f"{line}{' ' * pad}{_style_comment(shown)}")
+            out.append(f"{line}{' ' * pad}{style_comment(shown)}")
         else:
             out.append(line)
 

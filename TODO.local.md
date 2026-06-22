@@ -1,1 +1,7 @@
-review lsc.py, tests, CLAUDE.md, README.md
+# Review:
+
+test-psc.py
+CLAUDE.md
+lsc.py
+Makefile
+README.me
