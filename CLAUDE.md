@@ -32,6 +32,17 @@ comment style, above the listing. It is manifest-only (a directory has no head
 to scan) and is set with `lsc --set . "..."` (which `os.path.split` resolves to
 `name == "."` in that directory's manifest, so no special-casing in `cmd_set`).
 
+The same `.` caption does double duty: when a *listed entry* is a directory,
+`get_effective_comment` shows that subdirectory's own `.` caption as its row
+comment (`get_dir_caption`). This is one level deep — the `--oneline` listing is
+flat, so each line is one immediate child and there is no recursion. Precedence
+follows the one global rule "the comment that lives with the item wins": a
+subdir's own caption beats a parent manifest entry for that subdir, exactly as a
+file's magic line beats the manifest. `warn_if_shadowed` therefore also fires
+for `--set SUBDIR` (but not `--set SUBDIR/.`, where `name == DIR_KEY` is the
+caption itself, not something it shadows). `get_dir_caption` honors the
+no-download rule: it skips an evicted manifest unless `--fetch` is set.
+
 ## Design decisions and their reasons (do not silently reverse these)
 
 - **No xattrs.** An earlier version stored comments in a `user.comment`
@@ -95,7 +106,10 @@ to scan) and is set with `lsc --set . "..."` (which `os.path.split` resolves to
 - `get_effective_comment(path, fetch_icloud=True)` — effective comment:
   `get_magic_comment(path, fetch_icloud) or get_manifest_comment(path)`. The lister
   passes `fetch_icloud=False` by default; `--set`/`--rm`/`--get` keep the default.
+  For a directory it is instead `get_dir_caption(path) or get_manifest_comment(path)`.
 - `get_magic_comment` / `get_manifest_comment` — the two sources.
+- `get_dir_caption(path, fetch_icloud=True)` — a directory's own `.` caption, used
+  both as its header when listed directly and as its row comment in the parent.
 - `is_dataless` — macOS SF_DATALESS check; gates the magic-comment probe so a
   listing never forces an iCloud download.
 - `search_head` — binary-guarded, islice-capped (50 lines) regex scan.

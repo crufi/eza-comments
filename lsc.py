@@ -39,7 +39,7 @@ caption: it prints left-aligned, in the comment style, as a header line above
 the listing.
 """
 
-# comment: python script driving my ls-with-comments
+# comment: main python script for lsc (eza-with-comments)
 
 import os
 import re
@@ -48,6 +48,7 @@ import json
 import shutil
 import subprocess
 import shlex
+from datetime import datetime
 from itertools import islice
 
 __version__ = "0.1.0"
@@ -67,8 +68,22 @@ GAP = 2                # spaces between names and the comment column
 FALLBACK_WIDTH = 80    # used when terminal width can't be detected (piped)
 
 # ANSI styling applied to the comment text. "2" = dim (renders gray in most
-# themes), "3" = italic. Set to "" for plain text.
-COMMENT_STYLE = "2;3"
+# themes), "3" = italic. Set to "" for plain text. LSC_COMMENT_STYLE overrides it.
+COMMENT_STYLE = os.environ.get("LSC_COMMENT_STYLE") or "2;3"
+
+# Recently-changed comments are highlighted so a just-set comment stands out. A
+# comment counts as recent when it was changed within HILITE_SECS: for a manifest
+# comment that is the entry's stored "ts"; for a magic comment it is the file's
+# mtime (editing the file is the only way to change its magic line). On by
+# default; --no-hilite-recent (or LSC_HILITE_RECENT=0) turns it off. The
+# highlight only ever repaints rows that already have a comment, so a no-comment
+# listing stays byte-identical to plain eza whether it is on or off.
+HILITE_STYLE = os.environ.get("LSC_HILITE_STYLE") or "38;5;179"  # a muted gold
+HILITE_SECS = 60       # a comment changed within this many seconds is "recent"
+if os.environ.get("LSC_HILITE_SECS", "").isdigit():
+    HILITE_SECS = int(os.environ["LSC_HILITE_SECS"])
+HILITE_RECENT = os.environ.get("LSC_HILITE_RECENT", "1").lower() not in (
+    "0", "false", "no", "off", "")
 
 # Shown in the comment column for an evicted (dataless) iCloud file that has no
 # manifest comment, so the line reads as deliberately not-yet-downloaded rather
@@ -240,10 +255,31 @@ def save_manifest(directory: str, data: dict) -> bool:
     return True
 
 
-def get_manifest_comment(path: str) -> str:
-    """Manifest comment for a single file path, or empty string."""
+def entry_text(value) -> str:
+    """Comment text from a manifest value. A value is either a bare string
+    (legacy, or any entry with no recorded time) or an object
+    {"text": ..., "ts": ...}. Both forms are read; cmd_set_rm writes only the
+    object form, so old manifests keep working unchanged."""
+    if isinstance(value, dict):
+        return value.get("text", "") or ""
+    return value or ""
+
+
+def entry_ts(value):
+    """ISO-8601 set-time stored on a manifest value, or None. Bare-string and
+    timeless entries have none, so they are never highlighted as recent."""
+    return value.get("ts") if isinstance(value, dict) else None
+
+
+def get_manifest_value(path: str):
+    """Raw manifest value (string or object) for a path, or "" if none."""
     directory, name = os.path.split(path)
     return load_manifest(directory).get(name, "")
+
+
+def get_manifest_comment(path: str) -> str:
+    """Manifest comment for a single file path, or empty string."""
+    return entry_text(get_manifest_value(path))
 
 
 # regex for magic-comment line:
@@ -295,16 +331,98 @@ def get_magic_comment(path: str) -> str:
     return ""
 
 
-def get_effective_comment(path: str, fetch_icloud: bool = True) -> str:
-    """Effective comment for the listing. A magic "comment:" line wins, then
-    the per-directory manifest. When fetch_icloud is False and the file is an
-    evicted (dataless) iCloud file, its contents are not read (so the lookup
-    cannot trigger a download): the manifest still applies, and if it has no
-    entry the UNFETCHED_ICLOUD_PLACEHOLDER is shown so the file is not silently
-    blank. Otherwise, no comment returns an empty string."""
+def get_dir_caption_value(path: str, fetch_icloud: bool = True):
+    """Raw manifest value (string or object) for a directory's own "." caption,
+    or "". This is the same caption shown as the header when that directory is
+    listed directly; here it lets a subdirectory describe itself in its parent's
+    listing. The read is skipped (returns "") for an evicted manifest when
+    fetch_icloud is False, so a parent listing never forces an iCloud download
+    just to read a subdir's caption."""
+    if not fetch_icloud and is_dataless(get_manifest_path(path)):
+        return ""
+    return load_manifest(path).get(DIR_KEY, "")
+
+
+def get_dir_caption(path: str, fetch_icloud: bool = True) -> str:
+    """A directory's own "." caption text (see get_dir_caption_value)."""
+    return entry_text(get_dir_caption_value(path, fetch_icloud))
+
+
+def now_ts():
+    """Current local time as a timezone-aware datetime. LSC_NOW (an ISO-8601
+    string) overrides it so tests can pin "now" and keep recency deterministic."""
+    override = os.environ.get("LSC_NOW")
+    if override:
+        try:
+            return datetime.fromisoformat(override)
+        except ValueError:
+            pass
+    return datetime.now().astimezone()
+
+
+def ts_is_recent(ts, now=None) -> bool:
+    """True if the ISO-8601 set-time `ts` is within HILITE_SECS of now. None or
+    an unparseable/naive value -> False, so legacy timeless entries never
+    highlight. A future ts (negative delta, e.g. clock skew) is not "recent"."""
+    if not ts:
+        return False
+    now = now or now_ts()
+    try:
+        delta = (now - datetime.fromisoformat(ts)).total_seconds()
+    except (ValueError, TypeError):
+        return False
+    return 0 <= delta <= HILITE_SECS
+
+
+def mtime_is_recent(path: str, now=None) -> bool:
+    """True if path's mtime is within HILITE_SECS of now. Used for a magic
+    comment, whose only way to change is editing the file itself. stat does not
+    trigger an iCloud download."""
+    try:
+        mtime = os.stat(path).st_mtime
+    except OSError:
+        return False
+    now = now or now_ts()
+    return 0 <= (now.timestamp() - mtime) <= HILITE_SECS
+
+
+def resolve_comment(path: str, fetch_icloud: bool = True):
+    """Return (comment, recent) for the listing: the effective comment string
+    plus whether the shown comment was changed within HILITE_SECS. Text and
+    freshness are decided on one precedence path so they cannot disagree.
+
+    For a directory, its own "." caption (its stored ts) wins over a parent
+    manifest's entry for it — the same "the comment that lives with the item
+    wins" rule that makes a file's magic line beat the manifest; a directory has
+    no head to scan, so no magic line is involved. For a file, a magic
+    "comment:" line (recency = file mtime) wins, then the per-directory manifest
+    (recency = stored ts). When fetch_icloud is False and the file is an evicted
+    (dataless) iCloud file its contents are not read, so only the manifest
+    applies; if it has no entry the UNFETCHED_ICLOUD_PLACEHOLDER is shown (never
+    recent). Otherwise no comment returns ("", False)."""
+    now = now_ts()
+    if os.path.isdir(path):
+        value = get_dir_caption_value(path, fetch_icloud)
+        if entry_text(value):
+            return entry_text(value), ts_is_recent(entry_ts(value), now)
+        parent = get_manifest_value(path)
+        return entry_text(parent), ts_is_recent(entry_ts(parent), now)
     if not fetch_icloud and is_dataless(path):
-        return get_manifest_comment(path) or UNFETCHED_ICLOUD_PLACEHOLDER
-    return get_magic_comment(path) or get_manifest_comment(path)
+        value = get_manifest_value(path)
+        text = entry_text(value)
+        if text:
+            return text, ts_is_recent(entry_ts(value), now)
+        return UNFETCHED_ICLOUD_PLACEHOLDER, False
+    if magic := get_magic_comment(path):
+        return magic, mtime_is_recent(path, now)
+    value = get_manifest_value(path)
+    return entry_text(value), ts_is_recent(entry_ts(value), now)
+
+
+def get_effective_comment(path: str, fetch_icloud: bool = True) -> str:
+    """Effective comment text for the listing (see resolve_comment for the
+    precedence rules and the recency flag the listing uses)."""
+    return resolve_comment(path, fetch_icloud)[0]
 
 
 # ----- options handling ---------------------------------------------------------------------------
@@ -365,10 +483,11 @@ def base_dir(args):
     return ""
 
 
-def style_comment(text: str) -> str:
-    if not COMMENT_STYLE:
+def style_comment(text: str, recent: bool = False) -> str:
+    style = HILITE_STYLE if recent else COMMENT_STYLE
+    if not style:
         return text
-    return f"\x1b[{COMMENT_STYLE}m{text}\x1b[0m"
+    return f"\x1b[{style}m{text}\x1b[0m"
 
 
 def clip_text(text: str, limit: int) -> str:
@@ -397,8 +516,22 @@ def clip_text(text: str, limit: int) -> str:
 # ----- flags --------------------------------------------------------------------------------------
 
 def warn_if_shadowed(path: str) -> None:
-    """If an in-file magic 'comment:' line exists, it takes precedence over any modified
-    manifest in the listing. Warn (to stderr) but let the caller proceed."""
+    """A comment that lives with the item shadows the manifest entry just
+    written, so the listing won't show the manifest one. For a file that's an
+    in-file magic 'comment:' line; for a directory it's the directory's own '.'
+    caption, which beats a parent manifest's entry for that directory. Warn (to
+    stderr) but let the caller proceed. Captioning a directory itself
+    ('--set DIR/.', name == DIR_KEY) is excluded — that entry is the caption,
+    not something it shadows."""
+    _, name = os.path.split(path)
+    if os.path.isdir(path) and name != DIR_KEY:
+        caption = get_dir_caption(path)
+        if caption:
+            sys.stderr.write(
+                f'lsc: note: {name} has its own "." caption, which shadows the lsc '
+                f'comment manifest entry; the listing will still show: "{caption}"\n'
+            )
+        return
     magic = get_magic_comment(path)
     if magic:
         sys.stderr.write(
@@ -442,7 +575,11 @@ def cmd_set_rm(argv, remove: bool) -> int:
         # we'll still warn_if_shadowed() below, since magic comment might persist
     else:
         if comment:
-            data[name] = comment
+            # Store as an object carrying the local set-time (ISO-8601, seconds
+            # resolution, no nanos) so the listing can highlight a just-changed
+            # comment. entry_text/entry_ts still read the older bare-string form.
+            data[name] = {"text": comment,
+                          "ts": now_ts().isoformat(timespec="seconds")}
         elif name in data:
             del data[name]
         if not save_manifest(directory, data):
@@ -511,6 +648,19 @@ def main(argv):
     )
     args = [a for a in args if a not in fetch_flags]
 
+    # Recently-changed comments are highlighted by default. The long-form flags
+    # (no short form, matching the rest of lsc) force it on or off for this run,
+    # overriding the LSC_HILITE_RECENT default; "-recent" is optional in each.
+    # Consumed here so they are never handed to eza. Off wins if both are given.
+    hilite = HILITE_RECENT
+    if any(a in ("--hilite-recent", "--hilite") for a in args):
+        hilite = True
+    if any(a in ("--no-hilite-recent", "--no-hilite") for a in args):
+        hilite = False
+    args = [a for a in args
+            if a not in ("--hilite-recent", "--hilite",
+                         "--no-hilite-recent", "--no-hilite")]
+
     lines = run_eza(args)
     base = base_dir(args)
 
@@ -524,12 +674,18 @@ def main(argv):
     # is what actually occupies terminal columns. Aligning on this keeps the
     # truncated and non-truncated branches on the same origin.
     full_vis = [vis_width(strip_ansi_styling(ln)) for ln in lines]
-    comments = [get_effective_comment(p, fetch_icloud) for p in paths]
+    resolved = [resolve_comment(p, fetch_icloud) for p in paths]
+    comments = [text for text, _ in resolved]
+    # A row's comment is highlighted only when highlighting is on and the comment
+    # is recent; folding `hilite` in here keeps the render loop style-agnostic.
+    recents = [hilite and recent for _, recent in resolved]
 
     # A manifest entry keyed "." is the directory's own caption. It is shown
     # left-aligned, in the comment style, as a header line above the listing.
     # Manifest only (directories can't have magic comments); must set with '--set'.
-    dir_comment = load_manifest(base).get(DIR_KEY, "")
+    dir_value = load_manifest(base).get(DIR_KEY, "")
+    dir_comment = entry_text(dir_value)
+    dir_recent = hilite and ts_is_recent(entry_ts(dir_value))
 
     any_comments = any(comments)
 
@@ -564,14 +720,14 @@ def main(argv):
     out = []
 
     if dir_comment:
-        out.append(style_comment(clip_text(dir_comment, width)))
+        out.append(style_comment(clip_text(dir_comment, width), dir_recent))
 
-    for line, fw, comment in zip(lines, full_vis, comments):
+    for line, fw, comment, recent in zip(lines, full_vis, comments, recents):
         shown = clip_text(comment, comment_budget) if comment else ""
         if any_truncate and fw > name_trunc:
             # always truncate when truncation is in play, even with no comment
             cut = truncate_ansi(line, name_trunc)
-            tail = style_comment(shown) if shown else ""
+            tail = style_comment(shown, recent) if shown else ""
             out.append(f"{cut}\u2026 {tail}".rstrip())
         elif shown:
             # The unfetched iCloud placeholder is right-aligned to the terminal's right
@@ -584,7 +740,7 @@ def main(argv):
                     out.append(f"{line}{' ' * rpad}{style_comment(comment)}")
                     continue
             pad = col - fw
-            out.append(f"{line}{' ' * pad}{style_comment(shown)}")
+            out.append(f"{line}{' ' * pad}{style_comment(shown, recent)}")
         else:
             out.append(line)
 

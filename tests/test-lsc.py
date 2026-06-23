@@ -69,6 +69,12 @@ class LscTests(unittest.TestCase):
         (Path(self.dir) / ".lsc-comments.json").write_text(
             json.dumps(mapping), encoding="utf-8")
 
+    def _subdir_manifest(self, dirname, mapping):
+        d = Path(self.dir) / dirname
+        d.mkdir(exist_ok=True)
+        (d / ".lsc-comments.json").write_text(
+            json.dumps(mapping), encoding="utf-8")
+
     def test_passthrough_is_byte_identical(self):
         # No comments anywhere -> output must equal plain eza, byte for byte.
         names = ["alpha.txt", "beta.txt"]
@@ -112,6 +118,46 @@ class LscTests(unittest.TestCase):
         out = run_lsc(self.dir, make_env(["a.txt", "b.txt"]))
         first = out.splitlines()[0]
         self.assertEqual(ANSI_STYLING_RE.sub("", first), "these are pleasant tools")
+
+    def test_subdir_caption_shows_in_parent_listing(self):
+        # A subdirectory's own "." caption appears as its comment when the parent
+        # is listed (one level deep, no recursion: the listing is flat).
+        self._subdir_manifest("proj", {".": "my project root"})
+        out = run_lsc(self.dir, make_env(["proj"]))
+        self.assertIn("my project root", out)
+
+    def test_subdir_caption_beats_parent_entry(self):
+        # Uniform precedence: the comment that lives with the item wins. A
+        # subdir's own "." caption beats a parent manifest entry for that subdir,
+        # just as a file's magic line beats the manifest.
+        self._subdir_manifest("proj", {".": "self caption"})
+        self._manifest({"proj": "parent entry"})
+        out = run_lsc(self.dir, make_env(["proj"]))
+        self.assertIn("self caption", out)
+        self.assertNotIn("parent entry", out)
+
+    def test_subdir_without_caption_falls_back_to_parent_entry(self):
+        # No self caption -> the parent manifest entry is used.
+        (Path(self.dir) / "plain").mkdir()
+        self._manifest({"plain": "described from parent"})
+        out = run_lsc(self.dir, make_env(["plain"]))
+        self.assertIn("described from parent", out)
+
+    def test_set_subdir_warns_when_caption_shadows(self):
+        # Setting a parent entry for a subdir that has its own "." caption warns
+        # (stderr), since the caption is what the listing will actually show;
+        # setting the caption itself ('--set DIR/.') must not warn.
+        self._subdir_manifest("proj", {".": "self caption"})
+        shadowed = subprocess.run(
+            [sys.executable, LSC, "--set", "proj", "x"],
+            cwd=self.dir, capture_output=True, text=True, env=make_env([]))
+        self.assertEqual(shadowed.returncode, 0, shadowed.stderr)
+        self.assertIn("caption", shadowed.stderr)
+        caption_itself = subprocess.run(
+            [sys.executable, LSC, "--set", "proj/.", "renamed"],
+            cwd=self.dir, capture_output=True, text=True, env=make_env([]))
+        self.assertEqual(caption_itself.returncode, 0, caption_itself.stderr)
+        self.assertEqual(caption_itself.stderr, "")
 
     def test_set_dot_writes_directory_key(self):
         # `lsc --set . "..."` stores the caption under "." in this dir's manifest.

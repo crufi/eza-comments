@@ -9,10 +9,11 @@
 A Python tool that runs an `eza` listing once, then annotates each file with
 a short comment in an aligned column to the right of the names. Colors and
 Nerd Font icons are preserved; the layout adapts to terminal width and clips
-so no line ever wraps. When no file in the listing has a comment, output is
-byte-identical to plain eza.
+so no line ever wraps. When no file in the listing has a comment, output reduces to plain `eza`.
 
 ![lsc screenshot](docs/screenshot.png)
+
+![image-20260623054852750](/Users/steve/Library/Application Support/typora-user-images/image-20260623054852750.png)
 
 <!-- comment: replace docs/screenshot.png with a real terminal capture before publishing -->
 
@@ -41,7 +42,7 @@ For each file, `lsc` looks for a comment in two places, in order of precedence:
 
    (The first example below becomes the actual `lsc` comment for this `.md` file.)
 
-       // comment: docs for my lsc (eza-with-comments) tool
+       // comment: docs for lsc (eza-with-comments)
        #  comment: so does this
        -- comment: and this
 
@@ -86,6 +87,15 @@ italic as comments. It lives in the manifest only (a directory has no head to
 scan for a magic line), keyed `.` in that directory's `.lsc-comments.json`, so
 it travels with the folder like any other comment. `lsc --set otherdir/. "..."`
 captions another directory.
+
+The same caption also describes the directory in its *parent's* listing: when a
+listed entry is a subdirectory, `lsc` shows that subdirectory's own `.` caption
+as its comment. This goes one level deep only (the listing is flat, so there is
+no recursion). A subdirectory's own caption takes precedence over any entry the
+parent manifest happens to keep for it — the same "the comment that lives with
+the item wins" rule that makes a file's magic line beat the manifest. Because of
+that, `--set SUBDIR "..."` from the parent warns (on stderr) when `SUBDIR` has
+its own caption, since the caption is what the listing will actually show.
 
 `--set` refuses if FILE does not exist (catches typos and wrong-directory
 mistakes). `--set` and `--rm` still act, but warn on stderr, when an in-file magic
