@@ -82,7 +82,7 @@ set.
   directory tree; the timestamp travels with the folder like the comment does).
   The `ts` is a human-readable local ISO-8601 string (`isoformat(timespec=
   "seconds")`), deliberately not epoch nanos, so a hand-inspected manifest stays
-  legible. Bare-string entries are still read (`entry_text`/`entry_ts`) and
+  legible. Any legacy bare-string entries are still read (`entry_text`/`entry_ts`) and
   simply never highlight, so old manifests keep working. A magic comment has no
   stored time; its freshness comes from the file mtime, since editing the file
   is the only way to change it. On-by-default is safe for the byte-identical
@@ -190,7 +190,7 @@ the literal beside them is the fallback default.
 - Filenames use hyphens, not underscores, as word separators; shell scripts
   end in `.sh`.
 - Files start with a terse magic line: `# comment: <under-60-char purpose>`.
-- In docs and comments, minimize CAPS and emphasis.
+- In docs and comments, minimize all-caps/emphasis.
 
 ## Possible next steps (not yet built)
 
