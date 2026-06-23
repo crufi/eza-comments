@@ -20,7 +20,7 @@ install:
 	echo "installed $$bindir/lsc"; \
 	echo "installed $$datadir/lsc.sh"; \
 	rp=$$(cd "$$bindir" 2>/dev/null && pwd -P); \
-	: "rp is bindir with symlinks resolved, so a synced ~/tools -> iCloud" \
+	: "rp is now bindir with symlinks resolved, so a synced ~/tools -> iCloud" \
 	  "symlink still matches a PATH entry written in its resolved form"; \
 	case ":$$PATH:" in \
 	  *":$$bindir:"*|*":$$rp:"*) ;; \

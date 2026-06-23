@@ -468,6 +468,12 @@ def cmd_get(argv) -> int:
 # ----- main entry point ---------------------------------------------------------------------------
 
 def main(argv):
+    # Error code contract (following Unix/Linux convention):
+    #   0 = success
+    #   1 = runtime failure (missing target, unwritable manifest, eza not runnable)
+    #   2 = usage error (wrong arg count, conflicting action flags)
+    # and when eza itself fails, its own returncode is propagated unchanged
+    # (see run_eza).
     args = argv[1:]
 
     # '--help'/'--version' describe lsc itself and must not fall through to eza

@@ -1,8 +1,8 @@
 # Review:
 
-test-psc.py
 CLAUDE.md
-Makefile
 README.md
 
-test on bach!
+create a brew tap - see claude
+
+publish to r/stuff - see claude

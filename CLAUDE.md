@@ -3,28 +3,18 @@
 ---
 # CLAUDE.md
 
-Guidance for working on this project. Read before editing `lsc.py`.
+Maintainer notes for editing `lsc.py`. **Read `README.md` first** — it covers
+what lsc is, how it installs, the flags, and the env vars (`LSC_EZA_OPTS`,
+`LSC_PROBE_EVICTED`, …). This file deliberately does *not* repeat that; it holds
+only what a user-facing README shouldn't: the rationale behind the design, the
+bugs that are easy to reintroduce, and a map of the code. When behavior changes,
+update the README (the source of truth for behavior) and touch this file only
+for design/gotcha changes.
 
-## What this is
+`lsc` is one dependency-free Python file (`wcwidth` used only if importable),
+plus thin shell wrappers and a Makefile.
 
-`lsc` runs `eza` once and annotates each line with a short per-file comment in
-an aligned column, preserving eza's colors and Nerd Font icons. It is a single
-Python file (`lsc.py`) plus thin zsh wrappers. There are no dependencies;
-`wcwidth` is used if importable but not required.
-
-`make install` puts the script on PATH as `lsc` (default `~/.local/bin/lsc`)
-and copies `lsc.sh` to `$PREFIX/share/lsc/` (default `~/.local/share/lsc/`);
-locations are overridable via PREFIX/BINDIR/DATADIR, and a leading `~` in an
-override is expanded in the recipe so it never lands on disk literally. The
-functions are POSIX (work in bash or zsh); users source the installed `lsc.sh`
-from their shell rc:
-
-    _eza_ignore += .lsc-comments.json   # manifest hidden from an eza-based ls
-    setcomm() -> lsc --set "$@"   # write a manifest comment
-    rmcomm()  -> lsc --rm  "$@"   # remove a manifest comment
-    getcomm() -> lsc --get "$@"   # print effective comment
-
-## Where comments come from (precedence matters)
+## Where comments come from (the code-level view; README has the user version)
 
 1. An in-file magic line in the first 50 lines of a text file:
    `(?i)^\s*(?://|#|--|;)\s*comment:\s*(.*)$`. Binary / non-UTF-8 files are
@@ -68,7 +58,7 @@ to scan) and is set with `lsc --set . "..."` (which `os.path.split` resolves to
   tty (piped), width falls back to `FALLBACK_WIDTH` and output is byte-
   identical to plain eza when no comments exist.
 
-## Gotchas that caused real bugs (regression-prone areas)
+## Gotchas that caused bugs (regression-prone areas)
 
 - **Nerd Font icons span three PUA ranges.** `get_clean_filename` strips the leading
   icon glyph; `is_pua` must cover the BMP PUA (U+E000–U+F8FF) AND both Supplementary
@@ -140,10 +130,9 @@ to scan) and is set with `lsc --set . "..."` (which `os.path.split` resolves to
   end in `.sh`.
 - Files start with a terse magic line: `# comment: <under-60-char purpose>`.
 - In docs and comments, minimize CAPS and emphasis.
-- The owner uses two spaces after periods in prose (not enforced in code).
 
 ## Possible next steps (not yet built)
 
-- `mv` subcommand to move a manifest entry when a file is renamed.
+- `lsc --mv` to move a manifest entry when a file is renamed (but feels like overkill).
 - Multi-directory args (`lsc dir1 dir2`) would need parsing eza section headers.
 - `eza -l` long-format support would need different name-to-path mapping.

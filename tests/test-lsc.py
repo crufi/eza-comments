@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # comment: regression tests for lsc (run via run-tests.sh)
 
-# These cover the bugs CLAUDE.md flags as regression-prone: byte-identical
+# These cover the features flagged in CLAUDE.md as regression-prone: byte-identical
 # pass-through when nothing has a comment, Supplementary-PUA icon stripping,
 # magic-line-beats-manifest precedence, and the no-line-ever-wraps width rule.
 # The real eza is replaced by tests/fake-eza.py through the EZA_BIN env var.
@@ -29,7 +29,7 @@ except OSError:
 sys.path.insert(0, str(ROOT))
 import lsc  # noqa: E402  (import after the sys.path tweak above)
 
-ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+ANSI_STYLING_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 
 def make_env(names, columns=120):
@@ -78,8 +78,8 @@ class LscTests(unittest.TestCase):
         self.assertEqual(run_lsc(self.dir, env), run_stub(env))
 
     def test_supplementary_pua_icon_stripped(self):
-        # The U+F086F icon must be stripped so the bare name is recovered and
-        # its manifest comment is found and attached.
+        # The U+F086F icon must be stripped so the bare name can be recovered and
+        # its manifest comment found.
         self._touch("notes.md")
         self._manifest({"notes.md": "meeting notes"})
         out = run_lsc(self.dir, make_env(["notes.md"]))
@@ -95,12 +95,12 @@ class LscTests(unittest.TestCase):
 
     def test_no_line_exceeds_width(self):
         # A long comment in a narrow terminal must be clipped so no visible
-        # line (ANSI stripped) exceeds the width.
+        # line (ANSI stripped) exceeds terminal width.
         self._touch("data.csv")
         self._manifest({"data.csv": "x" * 200})
         out = run_lsc(self.dir, make_env(["data.csv"], columns=40))
         for line in out.splitlines():
-            visible = ANSI_RE.sub("", line)
+            visible = ANSI_STYLING_RE.sub("", line)
             self.assertLessEqual(len(visible), 40, repr(line))
 
     def test_directory_comment_shows_as_left_aligned_header(self):
@@ -108,10 +108,10 @@ class LscTests(unittest.TestCase):
         # of it), in the comment style.
         self._touch("a.txt")
         self._touch("b.txt")
-        self._manifest({".": "these are my tools"})
+        self._manifest({".": "these are pleasant tools"})
         out = run_lsc(self.dir, make_env(["a.txt", "b.txt"]))
         first = out.splitlines()[0]
-        self.assertEqual(ANSI_RE.sub("", first), "these are my tools")
+        self.assertEqual(ANSI_STYLING_RE.sub("", first), "these are pleasant tools")
 
     def test_set_dot_writes_directory_key(self):
         # `lsc --set . "..."` stores the caption under "." in this dir's manifest.
@@ -124,8 +124,8 @@ class LscTests(unittest.TestCase):
         self.assertEqual(data["."], "dir note")
 
     def test_rm_orphaned_entry_succeeds(self):
-        # --rm must clear a manifest entry whose file no longer exists (deleted
-        # or renamed); unlike --set, it does not require the file to be present.
+        # '--rm' must clear a manifest entry whose file no longer exists (deleted
+        # or renamed); unlike '--set', it does not require the file to be present.
         self._manifest({"gone.txt": "old note"})
         r = subprocess.run([sys.executable, LSC, "--rm", "gone.txt"],
                            cwd=self.dir, capture_output=True, text=True,
@@ -136,7 +136,7 @@ class LscTests(unittest.TestCase):
 
     def test_set_empty_comment_clears_entry(self):
         # An empty comment means "no comment": `--set FILE ""` removes the
-        # entry (same as --rm), since "" and a missing entry are
+        # entry (same as '--rm'), since "" and a missing entry are
         # indistinguishable in a listing. The now-empty manifest is cleaned up.
         self._touch("real.txt")
         self._manifest({"real.txt": "an existing note"})
@@ -147,13 +147,35 @@ class LscTests(unittest.TestCase):
         self.assertFalse((Path(self.dir) / ".lsc-comments.json").exists())
 
     def test_set_missing_file_is_refused(self):
-        # --set refuses a nonexistent target (typo / wrong cwd) and writes no
+        # '--set' refuses a nonexistent target (typo/wrong cwd) and writes no
         # manifest.
         r = subprocess.run([sys.executable, LSC, "--set", "nope.txt", "x"],
                            cwd=self.dir, capture_output=True, text=True,
                            env=make_env([]))
         self.assertEqual(r.returncode, 1)
         self.assertFalse((Path(self.dir) / ".lsc-comments.json").exists())
+
+    def test_usage_error_exits_two(self):
+        # Malformed invocation (wrong arg count) and conflicting action flags are
+        # usage errors -> exit 2, distinct from a runtime failure (1). (The 1-vs-2
+        # split is the exit-code contract documented at the top of main().)
+        for argv in (["--set", "only-one-arg"],          # `--set` wants FILE + comment
+                     ["--rm"],                            # `--rm` wants FILE
+                     ["--get"],                           # `--get` wants FILE
+                     ["--set", "f", "c", "--rm", "f"]):   # two action flags at once
+            r = subprocess.run([sys.executable, LSC, *argv],
+                               cwd=self.dir, capture_output=True, text=True,
+                               env=make_env([]))
+            self.assertEqual(r.returncode, 2, f"{argv}: {r.stderr}")
+
+    def test_eza_returncode_is_propagated(self):
+        # When eza runs but fails, lsc forwards eza's own returncode unchanged.
+        env = make_env([])
+        env["FAKE_EZA_RC"] = "3"
+        r = subprocess.run([sys.executable, LSC, self.dir],
+                           capture_output=True, text=True, env=env)
+        self.assertEqual(r.returncode, 3, r.stderr)
+        self.assertIn("simulated failure", r.stderr)
 
     def test_help_exits_zero_without_invoking_eza(self):
         env = make_env(["should-not-appear.txt"])
@@ -175,15 +197,16 @@ class LscTests(unittest.TestCase):
         ph = lsc.UNFETCHED_ICLOUD_PLACEHOLDER
         self._touch("clip.mov")
         self._manifest({"clip.mov": ph})  # equals the placeholder sentinel
-        out = run_lsc(self.dir, make_env(["clip.mov"], columns=60))
+        COLS = 60
+        out = run_lsc(self.dir, make_env(["clip.mov"], columns=COLS))
         line = next(l for l in out.splitlines()
-                    if ph in ANSI_RE.sub("", l))
-        visible = ANSI_RE.sub("", line)
-        self.assertEqual(len(visible), 60)
+                    if ph in ANSI_STYLING_RE.sub("", l))
+        visible = ANSI_STYLING_RE.sub("", line)
+        self.assertEqual(len(visible), COLS)
         self.assertTrue(visible.endswith(ph))
 
     def test_fetch_icloud_flag_is_consumed(self):
-        # Both the long flag and the --fetch shorthand must be stripped before
+        # Both the long flag and the '--fetch' shorthand must be stripped before
         # eza sees them; output is unaffected.
         names = ["a.txt", "b.txt"]
         for n in names:
@@ -275,17 +298,17 @@ class IntegrationTests(unittest.TestCase):
         (Path(self.dir) / "run.sh").write_text(
             "#!/bin/sh\n# comment: from magic line\n", encoding="utf-8")
         (Path(self.dir) / ".lsc-comments.json").write_text(
-            json.dumps({"report.txt": "quarterly numbers",
+            json.dumps({"report.txt": "quarterly bananas",
                         "run.sh": "from manifest"}), encoding="utf-8")
         r = subprocess.run([sys.executable, LSC, self.dir],
                            capture_output=True, text=True, env=self._env())
         self.assertEqual(r.returncode, 0, r.stderr)
-        plain = ANSI_RE.sub("", r.stdout)
+        plain = ANSI_STYLING_RE.sub("", r.stdout)
         # filenames survive real icon + ANSI stripping
         self.assertIn("report.txt", plain)
         self.assertIn("run.sh", plain)
         # manifest comment shows; an in-file magic line wins over the manifest
-        self.assertIn("quarterly numbers", plain)
+        self.assertIn("quarterly bananas", plain)
         self.assertIn("from magic line", plain)
         self.assertNotIn("from manifest", plain)
 
@@ -299,12 +322,12 @@ class IntegrationTests(unittest.TestCase):
                            env=self._env(columns=cols))
         self.assertEqual(r.returncode, 0, r.stderr)
         for line in r.stdout.splitlines():
-            self.assertLessEqual(len(ANSI_RE.sub("", line)), cols, repr(line))
+            self.assertLessEqual(len(ANSI_STYLING_RE.sub("", line)), cols, repr(line))
 
 
 class EzaOptsTests(unittest.TestCase):
     # LSC_EZA_OPTS: a user flag replaces a matching default in place (by option
-    # identity, aliases included); unrelated flags append; --oneline is forced.
+    # identity, aliases included); unrelated flags append; '--oneline' is forced.
 
     def setUp(self):
         self._saved = os.environ.get("LSC_EZA_OPTS")
@@ -336,7 +359,7 @@ class EzaOptsTests(unittest.TestCase):
         self.assertIn("--classify", opts)  # other defaults intact
 
     def test_alias_spelling_matches_default(self):
-        opts = self._opts("--colour=never -F=never")  # British + short -F
+        opts = self._opts("--colour=never -F=never")  # UK spelling + short -F
         self.assertNotIn("--color=always", opts)
         self.assertIn("--colour=never", opts)
         self.assertNotIn("--classify", opts)
