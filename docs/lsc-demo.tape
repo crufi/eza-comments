@@ -4,6 +4,8 @@
 # installed. Produces docs/lsc-demo.gif with the icons/colors baked in as
 # pixels, so they render for everyone (an SVG/asciinema cast would tofu the
 # Nerd Font glyphs for viewers without the font).
+#
+# Build animgif with: vhs lsc-demo.tape && code lsc-demo.gif
 
 Output lsc-demo.gif
 
@@ -26,9 +28,9 @@ Type "rm -rf /tmp/lsc-demo && mkdir -p /tmp/lsc-demo/archive && cd /tmp/lsc-demo
 Enter
 Type "printf '#!/bin/sh\n# comment: nightly rsync script\n' > backup.sh"
 Enter
-Type "touch report.pdf notes.md goldberg-variations.flac"
+Type "touch report.pdf notes.md bwv_565.flac"
 Enter
-Type "mkdir -p src"
+Type "mkdir -p src && touch src/hello.cpp src/hello.h src/README.md"
 Enter
 Type "lsc --set . 'a demo directory for lsc'"
 Enter
@@ -36,11 +38,15 @@ Type "lsc --set report.pdf 'Q2 board deck — do not delete'"
 Enter
 Type "lsc --set archive 'old projects, safe to ignore'"
 Enter
+Type "export LSC_HILITE_SECS=5" # otherwise every file above would be hilighted
+Enter
 Type "clear"
 Enter
+Sleep 5s
 Show
 
 # ---- the payoff: one listing, caption + comments inline ----
+Sleep 400ms
 Type "lsc"
 Sleep 400ms
 Enter
@@ -58,7 +64,7 @@ Type "lsc"
 Sleep 600ms
 Enter
 Sleep 2500ms
-Type "# directories can have comments too"
+Type "# directories can have comments too (new comments are hilighted):"
 Enter
 Sleep 100ms
 Type "lsc --set src 'super awesome code'"
@@ -69,30 +75,34 @@ Type "lsc"
 Sleep 600ms
 Enter
 Sleep 2500ms
-Type "# directory comments are shown as headers when listing that directory"
+Type "# directory comments are shown as headers when listing that directory:"
 Enter
 Sleep 100ms
 Type "lsc src"
 Sleep 400ms
 Enter
-Type "# comments can live in magic lines inside a file"
+Sleep 2s
+Type "# comments can live in magic lines inside a file:"
 Enter
 Sleep 500ms
 Type "cat > secret_recipe <<EOF"
 Enter
-Type "# comment: don't tell anyone"
+Enter
+Type "    # comment: TOP SECRET - don't tell anyone!!!"
+Sleep 500ms
 Enter
 Enter
-Type "1. put some peanut butter and some jelly on bread"
+Type "    1. put peanut butter and jelly on bread"
 Enter
-Type "2. eat"
+Type "    2. eat"
 Enter
+Sleep 200ms
 Type "EOF"
 Enter
-Sleep 300ms
+Sleep 500ms
 Type "lsc"
 Enter
-Sleep 5500ms
+Sleep 11s
 
 # ---- cleanup (hidden) ----
 Hide

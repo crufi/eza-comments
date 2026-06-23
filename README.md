@@ -71,8 +71,11 @@ binaries where a magic line cannot live.
     lsc DIR             list DIR (comments resolved against DIR)
     lsc --fetch-icloud  read evicted iCloud files too (default skips them)
     lsc --fetch         shorthand for --fetch-icloud
+    lsc --no-hilite-recent  don't highlight just-changed comments (on by default)
+    lsc --hilite-recent     force the highlight on ("-recent" optional in both)
     lsc --set FILE TEXT set FILE's manifest comment
     lsc --set . TEXT    caption the directory (header line above the listing)
+    lsc --set DIR TEXT  caption DIR (writes inside DIR; same as --set DIR/.)
     lsc --rm  FILE      remove FILE's manifest comment
     lsc --get FILE      print FILE's effective comment
     lsc --help          show this help and exit
@@ -85,17 +88,22 @@ A manifest entry keyed `.` is the directory's own caption. Set it with
 header line above the listing — left-aligned at column zero, in the same dim
 italic as comments. It lives in the manifest only (a directory has no head to
 scan for a magic line), keyed `.` in that directory's `.lsc-comments.json`, so
-it travels with the folder like any other comment. `lsc --set otherdir/. "..."`
-captions another directory.
+it travels with the folder like any other comment.
 
-The same caption also describes the directory in its *parent's* listing: when a
-listed entry is a subdirectory, `lsc` shows that subdirectory's own `.` caption
-as its comment. This goes one level deep only (the listing is flat, so there is
-no recursion). A subdirectory's own caption takes precedence over any entry the
-parent manifest happens to keep for it — the same "the comment that lives with
-the item wins" rule that makes a file's magic line beat the manifest. Because of
-that, `--set SUBDIR "..."` from the parent warns (on stderr) when `SUBDIR` has
-its own caption, since the caption is what the listing will actually show.
+The same caption is also what describes a directory in its *parent's* listing:
+when a listed entry is a subdirectory, `lsc` shows that subdirectory's own `.`
+caption as its comment (one level deep — the listing is flat, so there is no
+recursion). A directory's comment comes *only* from its own caption, never from
+an entry in the parent's manifest, so it always travels with the directory and
+there is no two-place ambiguity to reason about.
+
+Because of that, captioning a directory writes *inside* it: `lsc --set DIR "..."`
+is exactly equivalent to `lsc --set DIR/. "..."` — both set the `.` key in
+`DIR/.lsc-comments.json`. So `lsc --set otherdir "..."` captions another
+directory. The one consequence: you must be able to write `DIR` itself; a
+writable parent is not enough (which is fair — you can't annotate a directory you
+can't write to), and `--set` reports a clean error and exits non-zero if it
+can't.
 
 `--set` refuses if FILE does not exist (catches typos and wrong-directory
 mistakes). `--set` and `--rm` still act, but warn on stderr, when an in-file magic
@@ -121,6 +129,25 @@ The listing adapts to the current terminal width:
 Other display details: comment text is shown dim + italic (via
 `COMMENT_STYLE`), and truncated names get a trailing ellipsis. If no file has
 a comment, the listing is passed through unchanged.
+
+## Recently-changed highlighting
+
+A comment that changed within the last `HILITE_SECS` seconds (60 by default) is
+drawn in a distinct highlight style (`HILITE_STYLE`, a muted gold) instead of
+the usual dim italic, so a comment you just set stands out. This is on by
+default; `--no-hilite-recent` turns it off for a run and `--hilite-recent`
+forces it back on (the `-recent` suffix is optional in both, and
+`LSC_HILITE_RECENT=0` flips the default). Because the highlight only ever
+recolors a row that already has a comment, a no-comment listing stays
+byte-identical to plain eza whether the highlight is on or off.
+
+"Recently changed" is judged per comment source: a manifest comment carries a
+set-time, written by `--set` (so manifest entries become
+`{"text": ..., "ts": "2026-06-23T14:05:00-07:00"}` — a human-readable local
+timestamp; older bare-string entries are still read, they just never highlight).
+A magic `comment:` line has no stored time, so its freshness is taken from the
+file's modification time — editing the file is the only way to change its magic
+comment anyway.
 
 ## Install
 
@@ -189,10 +216,19 @@ record which directory each line came from.
     GAP            = 2       # gap between names and the comment column
     FALLBACK_WIDTH = 80      # width used when output is piped (no tty)
     COMMENT_STYLE  = "2;3"   # ANSI SGR for comments: 2=dim, 3=italic; "" = plain
+    HILITE_STYLE   = "38;5;179"  # ANSI SGR for a recently-changed comment (gold)
+    HILITE_SECS    = 60      # a comment changed within this many seconds is recent
+    HILITE_RECENT  = True    # whether the recency highlight is on by default
     DATALESS_PLACEHOLDER = "(not downloaded)"  # shown for evicted iCloud files
 
 To pin the column instead of letting it shift as you resize, set `NAME_MIN`
 and `NAME_MAX` close together (e.g. both near 38).
+
+Several of these also take an environment-variable override, so you can tune
+them without editing the file: `LSC_COMMENT_STYLE` and `LSC_HILITE_STYLE` set
+the two comment styles (ANSI SGR strings), `LSC_HILITE_SECS` sets the recency
+window, and `LSC_HILITE_RECENT=0` turns the highlight off by default (a
+per-run `--no-hilite-recent` / `--hilite-recent` flag overrides it either way).
 
 ## Customizing the eza options
 

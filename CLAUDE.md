@@ -33,15 +33,21 @@ to scan) and is set with `lsc --set . "..."` (which `os.path.split` resolves to
 `name == "."` in that directory's manifest, so no special-casing in `cmd_set`).
 
 The same `.` caption does double duty: when a *listed entry* is a directory,
-`get_effective_comment` shows that subdirectory's own `.` caption as its row
-comment (`get_dir_caption`). This is one level deep — the `--oneline` listing is
-flat, so each line is one immediate child and there is no recursion. Precedence
-follows the one global rule "the comment that lives with the item wins": a
-subdir's own caption beats a parent manifest entry for that subdir, exactly as a
-file's magic line beats the manifest. `warn_if_shadowed` therefore also fires
-for `--set SUBDIR` (but not `--set SUBDIR/.`, where `name == DIR_KEY` is the
-caption itself, not something it shadows). `get_dir_caption` honors the
-no-download rule: it skips an evicted manifest unless `--fetch` is set.
+`resolve_comment` shows that subdirectory's own `.` caption as its row comment
+(`get_dir_caption_value`). This is one level deep — the `--oneline` listing is
+flat, so each line is one immediate child and there is no recursion.
+
+A directory's comment comes **only** from its own `.` caption; a parent
+manifest's entry for a subdirectory is ignored (parent entries are for files).
+This was a deliberate simplification of an earlier "subdir caption beats parent
+entry" precedence — two sources for one directory was confusing, and caption-only
+means the comment always travels with the directory. Consequences in the code:
+`cmd_set_rm` redirects a directory target to its own manifest (`--set DIR` ==
+`--set DIR/.`, so you must be able to write `DIR` itself, not just its parent),
+and `warn_if_shadowed` is back to the magic-line case only — there is no
+parent-entry-vs-caption shadowing left to warn about. `get_dir_caption_value`
+honors the no-download rule: it skips an evicted manifest unless `--fetch` is
+set.
 
 ## Design decisions and their reasons (do not silently reverse these)
 
@@ -68,6 +74,20 @@ no-download rule: it skips an evicted manifest unless `--fetch` is set.
   comments clip with an ellipsis so no line ever wraps. When stdout is not a
   tty (piped), width falls back to `FALLBACK_WIDTH` and output is byte-
   identical to plain eza when no comments exist.
+- **Recency highlight stores its timestamp in the manifest, not a side file.**
+  A comment changed within `HILITE_SECS` is drawn in `HILITE_STYLE` (on by
+  default). The set-time lives *in the manifest entry*, which is why the value
+  schema grew from a bare string to `{"text": ..., "ts": ...}` (an earlier plan
+  used an external `~/.local/state` dict — rejected so nothing lives outside the
+  directory tree; the timestamp travels with the folder like the comment does).
+  The `ts` is a human-readable local ISO-8601 string (`isoformat(timespec=
+  "seconds")`), deliberately not epoch nanos, so a hand-inspected manifest stays
+  legible. Bare-string entries are still read (`entry_text`/`entry_ts`) and
+  simply never highlight, so old manifests keep working. A magic comment has no
+  stored time; its freshness comes from the file mtime, since editing the file
+  is the only way to change it. On-by-default is safe for the byte-identical
+  guarantee because the highlight only ever recolors a row that already has a
+  comment — a no-comment listing is untouched either way.
 
 ## Gotchas that caused bugs (regression-prone areas)
 
@@ -87,6 +107,13 @@ no-download rule: it skips an evicted manifest unless `--fetch` is set.
   visible line (icon + name + classify char), so truncation and padding share
   one origin. Mixing name-space and line-space measurements misaligns the
   column.
+- **Comment text and its recency must come from one precedence path.**
+  `resolve_comment` returns `(text, recent)` together so the highlighted comment
+  is always the one actually shown; `get_effective_comment` is just its `[0]`.
+  If you add a new comment source, extend `resolve_comment` (not a parallel
+  freshness lookup), or text and highlight can disagree. The render loop folds
+  the `hilite` on/off switch into the per-row `recent` flags up front, so
+  `style_comment` stays style-agnostic.
 - **Write failures must not raise.** `save_manifest` returns a bool and cleans
   up its temp file on failure; `cmd_set`/`cmd_rm` report a clean error and exit
   non-zero. A read-only directory must not produce a traceback.
@@ -103,13 +130,21 @@ no-download rule: it skips an evicted manifest unless `--fetch` is set.
 
 ## Key functions
 
-- `get_effective_comment(path, fetch_icloud=True)` — effective comment:
-  `get_magic_comment(path, fetch_icloud) or get_manifest_comment(path)`. The lister
-  passes `fetch_icloud=False` by default; `--set`/`--rm`/`--get` keep the default.
-  For a directory it is instead `get_dir_caption(path) or get_manifest_comment(path)`.
+- `resolve_comment(path, fetch_icloud=True)` — the core resolver: returns
+  `(text, recent)`, deciding the shown comment and its freshness on one
+  precedence path (a directory: its own `.` caption only; a file: magic line >
+  manifest).
+- `get_effective_comment(path, fetch_icloud=True)` — `resolve_comment(...)[0]`,
+  the text-only view used by `--get`. The lister passes `fetch_icloud=False`;
+  `--set`/`--rm`/`--get` keep the default.
 - `get_magic_comment` / `get_manifest_comment` — the two sources.
-- `get_dir_caption(path, fetch_icloud=True)` — a directory's own `.` caption, used
-  both as its header when listed directly and as its row comment in the parent.
+- `entry_text` / `entry_ts` — read a manifest value that is either a bare string
+  (legacy) or `{"text": ..., "ts": ...}`; `cmd_set_rm` writes only the latter.
+- `now_ts` / `ts_is_recent` / `mtime_is_recent` — current local time (overridable
+  by `LSC_NOW` for tests) and the two within-`HILITE_SECS` freshness checks.
+- `get_dir_caption_value` — raw manifest value for a directory's own `.` caption,
+  used both as its header when listed directly and as its row comment in the
+  parent; skips an evicted manifest unless fetching.
 - `is_dataless` — macOS SF_DATALESS check; gates the magic-comment probe so a
   listing never forces an iCloud download.
 - `search_head` — binary-guarded, islice-capped (50 lines) regex scan.
@@ -120,13 +155,21 @@ no-download rule: it skips an evicted manifest unless `--fetch` is set.
 - `base_dir` — resolve `lsc DIR` names against DIR (single-dir case only).
 - `cmd_set` / `cmd_rm` / `cmd_get` — manifest CRUD; dispatched in `main` on
   the `--set` / `--rm` / `--get` flags (not subcommands, so a path named
-  `set`/`rm`/`get` still lists).
+  `set`/`rm`/`get` still lists). A directory target is redirected to its own
+  manifest's `.` key (`--set DIR` == `--set DIR/.`).
+- `warn_if_shadowed` — on `--set`/`--rm`, warns when a file's in-file magic line
+  will outrank the manifest entry in the listing (no-op for a directory).
 
 ## Tunables (top of file)
 
     MANIFEST_NAME, NAME_FRAC, NAME_MIN, NAME_MAX, GAP, FALLBACK_WIDTH,
     DATALESS_PLACEHOLDER,
-    COMMENT_STYLE, EZA_REQUIRED, EZA_DEFAULTS, EZA_OPT_KEY
+    COMMENT_STYLE, HILITE_STYLE, HILITE_SECS, HILITE_RECENT,
+    EZA_REQUIRED, EZA_DEFAULTS, EZA_OPT_KEY
+
+`COMMENT_STYLE`, `HILITE_STYLE`, `HILITE_SECS`, and `HILITE_RECENT` each read an
+`LSC_*` env override at import (so they can be tuned without editing the file);
+the literal beside them is the fallback default.
 
 ## Testing notes
 
@@ -137,6 +180,10 @@ no-download rule: it skips an evicted manifest unless `--fetch` is set.
   that emits `\U000f086f <ESC>[32m<name><ESC>[0m` lines. Use a Supplementary-
   PUA icon in the stub to catch the icon-range regression.
 - Always confirm the no-comment case stays byte-identical to plain eza.
+- Recency is time-dependent; pin "now" with `LSC_NOW` (an ISO-8601 string) so
+  highlight tests are deterministic. Magic-comment freshness keys off file
+  mtime, so use `os.utime` to age a file for the not-recent case. Assert on the
+  `HILITE_STYLE` escape (`\x1b[<style>m`) rather than a hardcoded color.
 
 ## Conventions for this codebase (owner preferences)
 

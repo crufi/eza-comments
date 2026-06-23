@@ -5,7 +5,9 @@
       "Bash(python3 tests/test-lsc.py)",
       "Bash(eza --version)",
       "Bash(eza --help)",
-      "Bash(grep -iA2 -E \"\\\\bda\\\\b|age|newest|oldest\")"
+      "Bash(grep -iA2 -E \"\\\\bda\\\\b|age|newest|oldest\")",
+      "Bash(git config *)",
+      "Bash(command -v code)"
     ]
   }
 }

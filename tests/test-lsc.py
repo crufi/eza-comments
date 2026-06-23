@@ -126,38 +126,104 @@ class LscTests(unittest.TestCase):
         out = run_lsc(self.dir, make_env(["proj"]))
         self.assertIn("my project root", out)
 
-    def test_subdir_caption_beats_parent_entry(self):
-        # Uniform precedence: the comment that lives with the item wins. A
-        # subdir's own "." caption beats a parent manifest entry for that subdir,
-        # just as a file's magic line beats the manifest.
+    def test_subdir_comment_comes_only_from_own_caption(self):
+        # A directory's comment is its own "." caption; a parent manifest entry
+        # for that directory is ignored (comments travel with the directory).
         self._subdir_manifest("proj", {".": "self caption"})
         self._manifest({"proj": "parent entry"})
         out = run_lsc(self.dir, make_env(["proj"]))
         self.assertIn("self caption", out)
         self.assertNotIn("parent entry", out)
 
-    def test_subdir_without_caption_falls_back_to_parent_entry(self):
-        # No self caption -> the parent manifest entry is used.
+    def test_subdir_parent_entry_is_ignored(self):
+        # With no own caption, a parent manifest entry for the subdir shows
+        # nothing -- directory comments are caption-only.
         (Path(self.dir) / "plain").mkdir()
         self._manifest({"plain": "described from parent"})
         out = run_lsc(self.dir, make_env(["plain"]))
-        self.assertIn("described from parent", out)
+        self.assertNotIn("described from parent", out)
 
-    def test_set_subdir_warns_when_caption_shadows(self):
-        # Setting a parent entry for a subdir that has its own "." caption warns
-        # (stderr), since the caption is what the listing will actually show;
-        # setting the caption itself ('--set DIR/.') must not warn.
-        self._subdir_manifest("proj", {".": "self caption"})
-        shadowed = subprocess.run(
-            [sys.executable, LSC, "--set", "proj", "x"],
+    def test_set_dir_captions_it_in_its_own_manifest(self):
+        # '--set DIR text' captions DIR: it writes the "." key in the manifest
+        # inside DIR (same as '--set DIR/.'), not a parent manifest entry, and
+        # never warns (a directory has no magic line to shadow it).
+        (Path(self.dir) / "proj").mkdir()
+        r = subprocess.run(
+            [sys.executable, LSC, "--set", "proj", "captioned"],
             cwd=self.dir, capture_output=True, text=True, env=make_env([]))
-        self.assertEqual(shadowed.returncode, 0, shadowed.stderr)
-        self.assertIn("caption", shadowed.stderr)
-        caption_itself = subprocess.run(
-            [sys.executable, LSC, "--set", "proj/.", "renamed"],
-            cwd=self.dir, capture_output=True, text=True, env=make_env([]))
-        self.assertEqual(caption_itself.returncode, 0, caption_itself.stderr)
-        self.assertEqual(caption_itself.stderr, "")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stderr, "")
+        inner = json.loads(
+            (Path(self.dir) / "proj" / ".lsc-comments.json").read_text())
+        self.assertEqual(inner["."]["text"], "captioned")
+        # the parent manifest was not touched
+        self.assertFalse((Path(self.dir) / ".lsc-comments.json").exists())
+
+    def _hilite_esc(self):
+        # The ANSI escape code a highlighted (recently-changed) comment is wrapped in.
+        return f"\x1b[{lsc.HILITE_STYLE}m"
+
+    def test_fresh_manifest_comment_is_highlighted(self):
+        # A comment whose stored "ts" is within the window renders in the
+        # highlight style. LSC_NOW pins "now" so the test is deterministic.
+        self._touch("f.txt")
+        self._manifest({"f.txt": {"text": "just set",
+                                  "ts": "2026-06-23T12:00:00-07:00"}})
+        env = make_env(["f.txt"])
+        env["LSC_NOW"] = "2026-06-23T12:00:30-07:00"  # 30s later, within 60
+        out = run_lsc(self.dir, env)
+        self.assertIn("just set", out)
+        self.assertIn(self._hilite_esc(), out)
+
+    def test_stale_manifest_comment_is_not_highlighted(self):
+        self._touch("f.txt")
+        self._manifest({"f.txt": {"text": "old",
+                                  "ts": "2026-06-23T12:00:00-07:00"}})
+        env = make_env(["f.txt"])
+        env["LSC_NOW"] = "2026-06-23T12:30:00-07:00"  # 30 min later
+        out = run_lsc(self.dir, env)
+        self.assertIn("old", out)
+        self.assertNotIn(self._hilite_esc(), out)
+
+    def test_no_hilite_recent_flag_disables_highlight(self):
+        self._touch("f.txt")
+        self._manifest({"f.txt": {"text": "fresh",
+                                  "ts": "2026-06-23T12:00:00-07:00"}})
+        env = make_env(["f.txt"])
+        env["LSC_NOW"] = "2026-06-23T12:00:10-07:00"
+        r = subprocess.run([sys.executable, LSC, "--no-hilite-recent", self.dir],
+                           capture_output=True, text=True, env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("fresh", r.stdout)
+        self.assertNotIn(self._hilite_esc(), r.stdout)
+
+    def test_recent_magic_comment_is_highlighted_by_mtime(self):
+        # A magic comment's freshness comes from the file mtime (editing the file
+        # is the only way to change it). A just-written file is recent.
+        self._touch("r.sh", "#!/bin/sh\n# comment: magic note\n")
+        out = run_lsc(self.dir, make_env(["r.sh"]))
+        self.assertIn("magic note", out)
+        self.assertIn(self._hilite_esc(), out)
+
+    def test_old_magic_comment_is_not_highlighted(self):
+        self._touch("r.sh", "#!/bin/sh\n# comment: magic note\n")
+        f = Path(self.dir) / "r.sh"
+        hour_ago = os.stat(f).st_mtime - 3600
+        os.utime(f, (hour_ago, hour_ago))
+        out = run_lsc(self.dir, make_env(["r.sh"]))
+        self.assertIn("magic note", out)
+        self.assertNotIn(self._hilite_esc(), out)
+
+    def test_set_then_list_highlights_the_just_set_comment(self):
+        # End to end: `--set` stamps the entry, an immediate listing highlights it.
+        self._touch("doc.md")
+        r = subprocess.run([sys.executable, LSC, "--set", "doc.md", "brand new"],
+                           cwd=self.dir, capture_output=True, text=True,
+                           env=make_env([]))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = run_lsc(self.dir, make_env(["doc.md"]))
+        self.assertIn("brand new", out)
+        self.assertIn(self._hilite_esc(), out)
 
     def test_set_dot_writes_directory_key(self):
         # `lsc --set . "..."` stores the caption under "." in this dir's manifest.
@@ -167,7 +233,9 @@ class LscTests(unittest.TestCase):
                            env=make_env([]))
         self.assertEqual(r.returncode, 0, r.stderr)
         data = json.loads((Path(self.dir) / ".lsc-comments.json").read_text())
-        self.assertEqual(data["."], "dir note")
+        # The entry is stored as an object carrying a set-time (for recency
+        # highlighting); the comment text lives under "text".
+        self.assertEqual(data["."]["text"], "dir note")
 
     def test_rm_orphaned_entry_succeeds(self):
         # '--rm' must clear a manifest entry whose file no longer exists (deleted

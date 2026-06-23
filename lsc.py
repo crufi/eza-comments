@@ -19,17 +19,32 @@ Comments can come from two places, in order of precedence:
 Manage the manifest with action flags (any other args specify the path to list):
 
   lsc                           list the current directory with comments
+
   lsc DIR                       list specified directory (one dir only; with
                                 multiple paths or globs, comments resolve
                                 against the current directory)
+
   lsc --fetch-icloud, --fetch   read evicted iCloud files too (forces iCloud
                                 download if needed; default skips this)
+
+  lsc --no-hilite-recent,       don't highlight just-changed comments (on by
+      --no-hilite               default)
+
+  lsc --hilite-recent,          highlight just-changed comments (if default disabled)
+      --hilite
+
   lsc --set FILE TEXT           set FILE's manifest comment (empty TEXT removes
-                                it, same as --rm)
+                                it, same as '--rm')
+
   lsc --rm  FILE                remove FILE's manifest comment, if any
+
   lsc --get FILE                print FILE's effective comment (inline or manifest)
-  lsc --help                    show this help
+
   lsc --version                 show version number
+
+  lsc --help                    show this help
+
+  (any other flags pass thru to eza, e.g. `lsc -la --color=never`)
 
 --set and --rm warn (on stderr) but still act when an in-file magic line shadows
 the manifest, since the magic line is still what a listing will actually show.
@@ -343,11 +358,6 @@ def get_dir_caption_value(path: str, fetch_icloud: bool = True):
     return load_manifest(path).get(DIR_KEY, "")
 
 
-def get_dir_caption(path: str, fetch_icloud: bool = True) -> str:
-    """A directory's own "." caption text (see get_dir_caption_value)."""
-    return entry_text(get_dir_caption_value(path, fetch_icloud))
-
-
 def now_ts():
     """Current local time as a timezone-aware datetime. LSC_NOW (an ISO-8601
     string) overrides it so tests can pin "now" and keep recency deterministic."""
@@ -391,10 +401,9 @@ def resolve_comment(path: str, fetch_icloud: bool = True):
     plus whether the shown comment was changed within HILITE_SECS. Text and
     freshness are decided on one precedence path so they cannot disagree.
 
-    For a directory, its own "." caption (its stored ts) wins over a parent
-    manifest's entry for it — the same "the comment that lives with the item
-    wins" rule that makes a file's magic line beat the manifest; a directory has
-    no head to scan, so no magic line is involved. For a file, a magic
+    A directory's comment comes only from its own "." caption — the manifest
+    inside it (recency = the caption's stored ts) — never a parent manifest's
+    entry, so the comment travels with the directory. For a file, a magic
     "comment:" line (recency = file mtime) wins, then the per-directory manifest
     (recency = stored ts). When fetch_icloud is False and the file is an evicted
     (dataless) iCloud file its contents are not read, so only the manifest
@@ -403,10 +412,7 @@ def resolve_comment(path: str, fetch_icloud: bool = True):
     now = now_ts()
     if os.path.isdir(path):
         value = get_dir_caption_value(path, fetch_icloud)
-        if entry_text(value):
-            return entry_text(value), ts_is_recent(entry_ts(value), now)
-        parent = get_manifest_value(path)
-        return entry_text(parent), ts_is_recent(entry_ts(parent), now)
+        return entry_text(value), ts_is_recent(entry_ts(value), now)
     if not fetch_icloud and is_dataless(path):
         value = get_manifest_value(path)
         text = entry_text(value)
@@ -516,22 +522,9 @@ def clip_text(text: str, limit: int) -> str:
 # ----- flags --------------------------------------------------------------------------------------
 
 def warn_if_shadowed(path: str) -> None:
-    """A comment that lives with the item shadows the manifest entry just
-    written, so the listing won't show the manifest one. For a file that's an
-    in-file magic 'comment:' line; for a directory it's the directory's own '.'
-    caption, which beats a parent manifest's entry for that directory. Warn (to
-    stderr) but let the caller proceed. Captioning a directory itself
-    ('--set DIR/.', name == DIR_KEY) is excluded — that entry is the caption,
-    not something it shadows."""
-    _, name = os.path.split(path)
-    if os.path.isdir(path) and name != DIR_KEY:
-        caption = get_dir_caption(path)
-        if caption:
-            sys.stderr.write(
-                f'lsc: note: {name} has its own "." caption, which shadows the lsc '
-                f'comment manifest entry; the listing will still show: "{caption}"\n'
-            )
-        return
+    """If an in-file magic 'comment:' line exists, it beats the manifest in the
+    listing; warn (to stderr) but let the caller proceed. A directory has no head
+    to scan, so this is a no-op for a directory target."""
     magic = get_magic_comment(path)
     if magic:
         sys.stderr.write(
@@ -548,7 +541,12 @@ def cmd_set_rm(argv, remove: bool) -> int:
     entry, same as '--rm', since "" and a missing entry look identical in a
     listing. With remove=True, argv is just FILE and the entry is deleted if
     present. Either way a surviving in-file magic line is flagged afterward,
-    since that is what a listing will actually show."""
+    since that is what a listing will actually show.
+
+    A directory target captions the directory: its comment is the "." key in the
+    manifest inside it (so it travels with the directory), so '--set DIR ...' is
+    equivalent to '--set DIR/. ...'. That manifest must be writable — you cannot
+    caption a directory you cannot write to, even from a writable parent."""
     if remove:
         if len(argv) != 1:
             sys.stderr.write("usage: lsc --rm FILE\n")
@@ -566,7 +564,13 @@ def cmd_set_rm(argv, remove: bool) -> int:
             sys.stderr.write(f"lsc: {path}: target file does not exist (doing nothing)\n")
             return 1
 
-    directory, name = os.path.split(path)
+    # A directory's comment is its own "." caption, kept in the manifest inside
+    # that directory; a file's lives in its parent directory's manifest keyed by
+    # name. (os.path.split already resolves an explicit "DIR/." to (DIR, ".").)
+    if os.path.isdir(path):
+        directory, name = path, DIR_KEY
+    else:
+        directory, name = os.path.split(path)
     data = load_manifest(directory)
 
     if remove and name not in data:
