@@ -3,15 +3,14 @@
 [![tests](https://github.com/crufi/eza-comments/actions/workflows/test.yaml/badge.svg)](https://github.com/crufi/eza-comments/actions/workflows/test.yaml)
 
 > A single-file Python wrapper that adds an aligned, per-file comment column to basic
-> [`eza`](https://github.com/eza-community/eza) output — colors and Nerd Font icons
-> intact. No dependencies.
+> [`eza`](https://github.com/eza-community/eza) output — colors and Nerd Font icons intact. No dependencies.
 
 A Python tool that runs `eza` once, annotating file with
 a short comment in an aligned column to the right of the names. Colors and
 Nerd Font icons are preserved; the layout adapts to terminal width and clips
 so no line ever wraps. When no file in the listing has a comment, output reduces to plain `eza`. All non-`lsc`-specific flags are passed thru to `eza`.
 
-![lsc screenshot](docs/screenshot.png)
+![lsc screenshot demo](docs/lsc-demo.gif)
 
 Requirements: Python 3.8+ (uses the walrus operator), [`eza`](https://github.com/eza-community/eza),
 and a Nerd Font for icons if desired (see below). `wcwidth` is used if importable but is
@@ -20,7 +19,7 @@ not required.
 ## Prior art
 
 The idea of per-file descriptions in a listing isn't new; this implementation is
-inspired by the original Macintosh Finder (Bruce Horn and Steve Capps, 1984). 
+inspired by the original Macintosh Finder (Horn and Capps, 1984). 
 `lsc` layers comments onto `eza`'s output (so colors, icons, and `--classify`
 indicators survive), and it prefers an in-file `comment:` line over any sidecar
 store — that comment travels with the file's bytes through iCloud, `rsync`,
@@ -131,6 +130,12 @@ comment anyway. (A hopefully-nice side effect is that recently changed files
 with magic comments are briefly highlighted by `lsc`.)
 
 ## Install
+
+On macOS, via Homebrew (pulls in eza automatically):
+
+    brew install crufi/tap/lsc
+
+From source, on any Unix:
 
     make install            # lsc -> ~/.local/bin, lsc.sh -> ~/.local/share/lsc
     make install PREFIX=/usr/local
