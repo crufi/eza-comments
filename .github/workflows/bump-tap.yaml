@@ -15,6 +15,11 @@ jobs:
       # HOMEBREW_TAP_TOKEN secret in THIS repo. Check the action's README for
       # the current major version tag.
       - uses: dawidd6/action-homebrew-bump-formula@v3
+        # Homebrew 6.0's tap-trust blocks loading a third-party tap's formula in
+        # CI; this opts out so bump-formula-pr can read ours. Documented as a
+        # temporary escape hatch -- Homebrew intends trust to become mandatory.
+        env:
+          HOMEBREW_NO_REQUIRE_TAP_TRUST: 1
         with:
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           no_fork: true               # operate on the tap directly, don't fork
