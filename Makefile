@@ -10,7 +10,7 @@ DATADIR ?= $(PREFIX)/share/lsc
 MANDIR  ?= $(PREFIX)/share/man/man1
 SCRIPT  := lsc.py
 
-.PHONY: install uninstall test readme man
+.PHONY: install uninstall test readme man release
 
 install:
 	@bindir=$$(eval echo "$(BINDIR)"); \
@@ -55,3 +55,22 @@ man:
 	@mkdir -p man
 	help2man -N -o man/lsc.1 "python3 lsc.py"
 	@echo "wrote man/lsc.1 -- commit it to ship the man page"
+
+# cut a release: regenerate docs, commit the working tree, tag, push, and
+# create the GitHub release with notes from the matching CHANGELOG section.
+# Usage: make release VER=0.1.1   (bump __version__ and add the CHANGELOG
+# section first; this packages your current working tree as that release).
+release: test man readme
+	@test -n "$(VER)" || { echo "usage: make release VER=0.1.1"; exit 1; }
+	@command -v gh >/dev/null 2>&1 || { echo "need gh (brew install gh)"; exit 1; }
+	@grep -q '__version__ = "$(VER)"' lsc.py || { echo "set __version__ = \"$(VER)\" in lsc.py first"; exit 1; }
+	@grep -q '^## \[$(VER)\]' CHANGELOG.md || { echo "add a '## [$(VER)]' section to CHANGELOG.md first"; exit 1; }
+	@git add -A
+	@git diff --cached --quiet || git commit -m "release v$(VER)"
+	@git tag -a "v$(VER)" -m "lsc $(VER)"
+	@git push origin HEAD "v$(VER)"
+	@notes=$$(mktemp); \
+	awk -v h="## [$(VER)]" 'index($$0,h)==1{f=1;next} /^## \[/{f=0} f' CHANGELOG.md > $$notes; \
+	gh release create "v$(VER)" --title "lsc $(VER)" --notes-file $$notes; \
+	rm -f $$notes
+	@echo "released v$(VER) -- the bump-tap workflow will open a formula PR on the tap; merge it"

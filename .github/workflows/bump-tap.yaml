@@ -1,0 +1,22 @@
+# comment: on a published release, bump the lsc formula in the homebrew tap
+name: bump-tap
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      # Updates url+sha256 in crufi/homebrew-tap's Formula/lsc.rb to this
+      # release's tag and opens a PR on the tap. Needs a PAT (not the default
+      # GITHUB_TOKEN) because it writes to a different repo; store it as the
+      # HOMEBREW_TAP_TOKEN secret in THIS repo. Check the action's README for
+      # the current major version tag.
+      - uses: dawidd6/action-homebrew-bump-formula@v3
+        with:
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          no_fork: true               # operate on the tap directly, don't fork
+          tap: crufi/homebrew-tap
+          formula: lsc
