@@ -10,6 +10,11 @@ DATADIR ?= $(PREFIX)/share/lsc
 MANDIR  ?= $(PREFIX)/share/man/man1
 SCRIPT  := lsc.py
 
+# colors for release messages; empty when there is no terminfo (e.g. in CI)
+RED   := $(shell tput setaf 1 2>/dev/null)
+GREEN := $(shell tput setaf 2 2>/dev/null)
+SGR0  := $(shell tput sgr0 2>/dev/null)
+
 .PHONY: install uninstall test readme man release
 
 install:
@@ -61,10 +66,10 @@ man:
 # Usage: make release VER=0.1.1   (bump __version__ and add the CHANGELOG
 # section first; this packages your current working tree as that release).
 release: test man readme
-	@test -n "$(VER)" || { echo "usage: make release VER=0.1.1"; exit 1; }
-	@command -v gh >/dev/null 2>&1 || { echo "need gh (brew install gh)"; exit 1; }
-	@grep -q '__version__ = "$(VER)"' lsc.py || { echo "set __version__ = \"$(VER)\" in lsc.py first"; exit 1; }
-	@grep -q '^## \[$(VER)\]' CHANGELOG.md || { echo "add a '## [$(VER)]' section to CHANGELOG.md first"; exit 1; }
+	@test -n "$(VER)" || { echo "$(RED)usage: make release VER=0.1.1$(SGR0)"; exit 1; }
+	@command -v gh >/dev/null 2>&1 || { echo "$(RED)need gh (brew install gh)$(SGR0)"; exit 1; }
+	@grep -q '__version__ = "$(VER)"' lsc.py || { echo "$(RED)set __version__ = \"$(VER)\" in lsc.py first$(SGR0)"; exit 1; }
+	@grep -q '^## \[$(VER)\]' CHANGELOG.md || { echo "$(RED)add a '## [$(VER)]' section to CHANGELOG.md first$(SGR0)"; exit 1; }
 	@git add -A
 	@git diff --cached --quiet || git commit -m "release v$(VER)"
 	@git tag -a "v$(VER)" -m "lsc $(VER)"
@@ -73,4 +78,4 @@ release: test man readme
 	awk -v h="## [$(VER)]" 'index($$0,h)==1{f=1;next} /^## \[/{f=0} f' CHANGELOG.md > $$notes; \
 	gh release create "v$(VER)" --title "lsc $(VER)" --notes-file $$notes; \
 	rm -f $$notes
-	@echo "released v$(VER) -- the bump-tap workflow will open a formula PR on the tap; merge it"
+	@echo "$(GREEN)released v$(VER) -- the bump-tap workflow will open a formula PR on the tap; merge it$(SGR0)"
