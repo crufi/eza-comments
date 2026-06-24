@@ -2,56 +2,55 @@
 """
 lsc - eza listing with an aligned comment column.
 
-Allows annotating files (and directories) with short comments that show up
-in a column next to file names in an `eza` listing. ANSI colors and Nerd Font
-icons from eza are preserved; truncation is ANSI-aware so escape sequences
-are never sliced mid-code.
+Annotate files and directories with short comments that appear in a column
+next to the names in an `eza` listing. With no action flag, lsc lists PATH (or
+the current directory). Only a single directory argument is resolved for
+comments; with multiple paths or globs, comments resolve against the current
+directory. Any flag not listed below is passed through to eza, e.g.
+`lsc -la --color=never`.
 
-Comments can come from two places, in order of precedence:
+Usage:
+  lsc [OPTION]... [PATH]...
+  lsc --set FILE TEXT
+  lsc --rm FILE
+  lsc --get FILE
 
-  1. an inline magic line near the top of a text file:
-       //  #comment: <text>   (case-insensitive, optional indent)
+Options:
+  --set FILE TEXT           set FILE's manifest comment (empty TEXT removes it,
+                            same as --rm); `--set . TEXT` captions the directory
 
-  2. a per-directory manifest, MANIFEST_NAME, mapping filename -> comment.
-     This is plain JSON content, so it can sync through iCloud and travels with
-     the directory (unlike, e.g., xattrs, which iCloud sync may strip).
+  --rm FILE                 remove FILE's manifest comment, if any
 
-Manage the manifest with action flags (any other args specify the path to list):
+  --get FILE                print FILE's effective comment (inline or manifest)
 
-  lsc                           list the current directory with comments
+  --fetch-icloud, --fetch   read evicted iCloud files too (forces an iCloud
+                            download if needed; default skips them)
 
-  lsc DIR                       list specified directory (one dir only; with
-                                multiple paths or globs, comments resolve
-                                against the current directory)
+  --no-hilite-recent, --no-hilite   do not highlight just-changed comments (on by default)
 
-  lsc --fetch-icloud, --fetch   read evicted iCloud files too (forces iCloud
-                                download if needed; default skips this)
+  --hilite-recent, --hilite         force highlighting of just-changed comments on
 
-  lsc --no-hilite-recent,       don't highlight just-changed comments (on by
-      --no-hilite               default)
+  --version                 show version number and exit
 
-  lsc --hilite-recent,          highlight just-changed comments (if default disabled)
-      --hilite
+  --help                    show this help and exit
 
-  lsc --set FILE TEXT           set FILE's manifest comment (empty TEXT removes
-                                it, same as '--rm')
+Comments:
+  Two sources, in order of precedence (an inline magic line wins over the
+  manifest):
 
-  lsc --rm  FILE                remove FILE's manifest comment, if any
+    1. an inline `comment:` line near the top of a text file, after a marker
+       (//, #, --, ; ) case-insensitive, optional indent
 
-  lsc --get FILE                print FILE's effective comment (inline or manifest)
+    2. a per-directory .lsc-comments.json manifest mapping bare filename to
+       text -- plain JSON, so it syncs through iCloud and travels with the
+       directory (unlike xattrs, which iCloud sync may strip)
 
-  lsc --version                 show version number
+  --set and --rm act on the manifest only; they warn (on stderr) but still act
+  when an in-file magic line would shadow the manifest entry in a listing.
 
-  lsc --help                    show this help
-
-  (any other flags pass thru to eza, e.g. `lsc -la --color=never`)
-
---set and --rm warn (on stderr) but still act when an in-file magic line shadows
-the manifest, since the magic line is still what a listing will actually show.
-
-A manifest entry keyed "." (set with `lsc --set . "..."`) is the directory's own
-caption: it prints left-aligned, in the comment style, as a header line above
-the listing.
+  A manifest entry keyed "." is the directory's own caption (set with
+  `lsc --set . "..."`); it prints left-aligned as a header line above the
+  listing.
 """
 
 # comment: main python script for lsc (eza-with-comments)
@@ -90,7 +89,7 @@ COMMENT_STYLE = os.environ.get("LSC_COMMENT_STYLE") or "2;3"
 # comment counts as recent when it was changed within HILITE_SECS: for a manifest
 # comment that is the entry's stored "ts"; for a magic comment it is the file's
 # mtime (editing the file is the only way to change its magic line). On by
-# default; --no-hilite-recent (or LSC_HILITE_RECENT=0) turns it off. The
+# default; '--no-hilite-recent' (or LSC_HILITE_RECENT=0) turns it off. The
 # highlight only ever repaints rows that already have a comment, so a no-comment
 # listing stays byte-identical to plain eza whether it is on or off.
 HILITE_STYLE = os.environ.get("LSC_HILITE_STYLE") or "38;5;179"  # a muted gold

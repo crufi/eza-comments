@@ -59,19 +59,8 @@ binaries where a magic line can't live.
 
 ## Managing comments
 
-    lsc                     list the current directory with comments
-    lsc DIR                 list directory DIR (only single directories supported)
-    lsc --fetch-icloud      read evicted iCloud files too (default skips them)
-    lsc --fetch             shorthand for --fetch-icloud
-    lsc --no-hilite-recent  don't highlight just-changed comments (on by default)
-    lsc --hilite-recent     force highlighting on ("-recent" optional in both)
-    lsc --set FILE "TEXT"   set FILE's manifest comment
-    lsc --set . "TEXT"      caption the directory (header line above the listing)
-    lsc --set DIR "TEXT"    caption DIR (writes inside DIR; same as --set DIR/.)
-    lsc --rm  FILE          remove FILE's manifest comment
-    lsc --get FILE          print FILE's effective comment
-    lsc --help              show help and exit
-    lsc --version           print the version and exit
+See [Usage](#usage) below for the full command and flag reference (generated
+from `lsc --help`).
 
 `--set` refuses if FILE does not exist. `--set` and `--rm` still act, 
 but warn on stderr, when an in-file magic
@@ -188,6 +177,65 @@ listing, `alias ls=lsc`.
     setcomm archive.zip "Q2 board deck, do not delete"
     lsc                 # current directory
     lsc ~/bin           # another directory, from anywhere
+
+Full command and flag reference (generated from `lsc --help`; run `make readme`
+to refresh):
+
+<!-- begin help -->
+```
+lsc - eza listing with an aligned comment column.
+
+Annotate files and directories with short comments that appear in a column
+next to the names in an `eza` listing. With no action flag, lsc lists PATH (or
+the current directory). Only a single directory argument is resolved for
+comments; with multiple paths or globs, comments resolve against the current
+directory. Any flag not listed below is passed through to eza, e.g.
+`lsc -la --color=never`.
+
+Usage:
+  lsc [OPTION]... [PATH]...
+  lsc --set FILE TEXT
+  lsc --rm FILE
+  lsc --get FILE
+
+Options:
+  --set FILE TEXT           set FILE's manifest comment (empty TEXT removes it,
+                            same as --rm); `--set . TEXT` captions the directory
+
+  --rm FILE                 remove FILE's manifest comment, if any
+
+  --get FILE                print FILE's effective comment (inline or manifest)
+
+  --fetch-icloud, --fetch   read evicted iCloud files too (forces an iCloud
+                            download if needed; default skips them)
+
+  --no-hilite-recent, --no-hilite   do not highlight just-changed comments (on by default)
+
+  --hilite-recent, --hilite         force highlighting of just-changed comments on
+
+  --version                 show version number and exit
+
+  --help                    show this help and exit
+
+Comments:
+  Two sources, in order of precedence (an inline magic line wins over the
+  manifest):
+
+    1. an inline `comment:` line near the top of a text file, after a marker
+       (//, #, --, ; ) case-insensitive, optional indent
+
+    2. a per-directory .lsc-comments.json manifest mapping bare filename to
+       text -- plain JSON, so it syncs through iCloud and travels with the
+       directory (unlike xattrs, which iCloud sync may strip)
+
+  --set and --rm act on the manifest only; they warn (on stderr) but still act
+  when an in-file magic line would shadow the manifest entry in a listing.
+
+  A manifest entry keyed "." is the directory's own caption (set with
+  `lsc --set . "..."`); it prints left-aligned as a header line above the
+  listing.
+```
+<!-- end help -->
 
 Directory argument support: `lsc DIR` resolves names against DIR, so comment
 lookups work even when run from a different working directory. This covers the

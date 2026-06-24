@@ -18,3 +18,22 @@ jobs:
           python-version: ${{ matrix.python-version }}
       # no real eza needed: the tests stub it through EZA_BIN
       - run: sh tests/run-tests.sh
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # The README's help block is generated from `lsc --help` (see `make
+      # readme`). Regenerate it here and fail if it differs from what's
+      # committed, so a stale block can't merge.
+      - name: README help block is current
+        run: |
+          make readme
+          if ! git diff --quiet README.md; then
+            echo "::error::README help block is stale. Run 'make readme' and commit."
+            git --no-pager diff README.md
+            exit 1
+          fi
