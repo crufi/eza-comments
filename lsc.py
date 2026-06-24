@@ -65,7 +65,7 @@ import shlex
 from datetime import datetime
 from itertools import islice
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 # ----- tunables ---------------------------------------------------------------
 

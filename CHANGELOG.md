@@ -8,7 +8,7 @@ aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.1.1] - 2026-06-24
+## [0.1.2] - 2026-06-24
 
 Improved help and release notes, comments to lsc.py, added manpage.
 
