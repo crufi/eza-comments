@@ -5,7 +5,7 @@
 
 Maintainer notes for editing `lsc.py`. **Read `README.md` first** — it covers
 what lsc is, how it installs, the flags, and the env vars (`LSC_EZA_OPTS`,
-`LSC_PROBE_EVICTED`, …). This file deliberately does *not* repeat that; it holds
+`LSC_FETCH_ICLOUD`, …). This file deliberately does *not* repeat that; it holds
 only what a user-facing README shouldn't: the rationale behind the design, the
 bugs that are easy to reintroduce, and a map of the code. When behavior changes,
 update the README (the source of truth for behavior) and touch this file only

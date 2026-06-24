@@ -7,7 +7,9 @@
       "Bash(eza --help)",
       "Bash(grep -iA2 -E \"\\\\bda\\\\b|age|newest|oldest\")",
       "Bash(git config *)",
-      "Bash(command -v code)"
+      "Bash(command -v code)",
+      "Bash(bash -c 'source ./lsc.sh && echo \"bash ok: ignore=$_eza_ignore\" && type setcomm rmcomm getcomm >/dev/null && echo \"wrappers ok\"')",
+      "Bash(zsh -c 'source ./lsc.sh && echo \"zsh ok: ignore=$_eza_ignore\"')"
     ]
   }
 }
