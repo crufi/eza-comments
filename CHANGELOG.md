@@ -8,6 +8,10 @@ aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-06-24
+
+Improved help and release notes, comments to lsc.py, added manpage.
+
 ## [0.1.0] - 2026-06-23
 
 First public release. `lsc` adds an aligned, per-file comment column to
