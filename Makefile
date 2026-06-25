@@ -58,7 +58,9 @@ readme:
 man:
 	@command -v help2man >/dev/null 2>&1 || { echo "need help2man (brew install help2man)"; exit 1; }
 	@mkdir -p man
-	help2man -N -o man/lsc.1 "python3 lsc.py"
+	@tmp=$$(mktemp -d); cp lsc.py "$$tmp/lsc"; chmod +x "$$tmp/lsc"; \
+	help2man -N -n "eza listing with an aligned comment column" "$$tmp/lsc" -o man/lsc.1; \
+	rm -rf "$$tmp"
 	@echo "wrote man/lsc.1 -- commit it to ship the man page"
 
 # cut a release: regenerate docs, commit the working tree, tag, push, and

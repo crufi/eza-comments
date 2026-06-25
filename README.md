@@ -183,8 +183,6 @@ to refresh):
 
 <!-- begin help -->
 ```
-lsc - eza listing with an aligned comment column.
-
 Annotate files and directories with short comments that appear in a column
 next to the names in an `eza` listing. With no action flag, lsc lists PATH (or
 the current directory). Only a single directory argument is resolved for
@@ -218,18 +216,15 @@ Options:
   --help                    show this help and exit
 
 Comments:
-  Two sources, in order of precedence (an inline magic line wins over the
-  manifest):
+  Comments come from two sources, with an inline magic line taking precedence
+  over the manifest. The inline form is a `comment:` line near the top of a text
+  file, after a //, #, --, or ; marker (case-insensitive, optional indent). The
+  manifest form is a per-directory .lsc-comments.json file mapping each bare
+  filename to its comment text; it is plain JSON, so it syncs through iCloud and
+  travels with the directory (unlike xattrs, which iCloud sync may strip).
 
-    1. an inline `comment:` line near the top of a text file, after a marker
-       (//, #, --, ; ) case-insensitive, optional indent
-
-    2. a per-directory .lsc-comments.json manifest mapping bare filename to
-       text -- plain JSON, so it syncs through iCloud and travels with the
-       directory (unlike xattrs, which iCloud sync may strip)
-
-  --set and --rm act on the manifest only; they warn (on stderr) but still act
-  when an in-file magic line would shadow the manifest entry in a listing.
+  Both --set and --rm act on the manifest only; they warn (on stderr) but still
+  act when an in-file magic line would shadow the manifest entry in a listing.
 
   A manifest entry keyed "." is the directory's own caption (set with
   `lsc --set . "..."`); it prints left-aligned as a header line above the

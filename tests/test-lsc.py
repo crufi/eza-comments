@@ -296,7 +296,7 @@ class LscTests(unittest.TestCase):
         r = subprocess.run([sys.executable, LSC, "--help"],
                            capture_output=True, text=True, env=env)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("aligned comment column", r.stdout)
+        self.assertIn("Annotate files", r.stdout)
         self.assertNotIn("should-not-appear.txt", r.stdout)
 
     def test_version_exits_zero(self):
